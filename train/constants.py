@@ -159,3 +159,13 @@ k_block_Z = Block(
         ),
     ],
 )
+
+k_blocks = [    # export constant
+    k_block_I,
+    k_block_T,
+    k_block_O,
+    k_block_J,
+    k_block_L,
+    k_block_S,
+    k_block_Z,
+]

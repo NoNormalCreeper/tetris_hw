@@ -93,6 +93,7 @@ class GameConfig(BaseModel):
     """
 
     awards: list[float]  # 消除 1, 2, 3, 4 行的奖励
+    available_blocks: list[Block]  # 可用的方块列表
 
 
 # class BoardSquare(BaseModel):
@@ -112,7 +113,7 @@ class Board(BaseModel):
     """
 
     block_types: list[Block]  # 棋盘上可用的方块类型
-    size: Size  # 棋盘可操作空间大小，高度为死亡判定线
+    size: Size  # 棋盘可操作空间大小，高度为死亡判定线减 1
     squares: list[list[Block]]  # 棋盘上的小方块矩阵
 
 
