@@ -13,8 +13,18 @@ initial_std_dev = 5.0 # 初始标准差
 mu = np.zeros(num_params)
 sigma = np.ones(num_params) * initial_std_dev
 
+def run_single_game(params: list[float]):
+    """
+    运行一局游戏，使用给定的参数 params = [a0, ..., an] 作为评估函数系数。
+    返回游戏得分。
+    """
+    # 这里你需要实现游戏逻辑
+    # 使用 params 来评估游戏状态
+    # 返回得分
+    pass  # TODO: 实现游戏逻辑
+
 # --- 模拟游戏的函数 (你需要实现这个！) ---
-def evaluate_parameters(params):
+def evaluate_parameters(params: list[float]):
     """
     使用给定的参数 params = [a0, ..., an] 运行 AI 玩 num_games_per_eval 局游戏，
     返回平均得分。
@@ -23,10 +33,10 @@ def evaluate_parameters(params):
     for _ in range(num_games_per_eval):
         # 初始化游戏环境
         # 运行一局游戏直到结束，使用 params 作为评估函数系数
-        # score = run_single_game(params) # <--- 你需要实现这个函数
+        score = run_single_game(params) # <--- 你需要实现这个函数
         # 为了示例，这里用随机数代替
-        score = np.random.rand() * 1000 # 模拟得分
-        total_score += score
+        # score = np.random.rand() * 1000 # 模拟得分
+        # total_score += score
     return total_score / num_games_per_eval
 
 # --- CE 主循环 ---
