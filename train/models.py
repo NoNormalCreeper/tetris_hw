@@ -70,7 +70,9 @@ class AssessmentModel(BaseModel):
     length: int  # 参数个数
     weights: list[float]  # 权重
 
-    param_functions: list[SkipValidation[callable]]  # 获取参数的函数，Game -> float
+    from typing import Callable
+
+    param_functions: list[Callable[["Game"], float]]  # 获取参数的函数，Game -> float
     # params: list[float]  # 模型参数
 
     class Config:
