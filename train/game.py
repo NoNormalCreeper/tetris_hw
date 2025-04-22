@@ -48,6 +48,154 @@ class DbtFeatureExtractor(FeatureExtractor):
     maximum_height: int = 0  # 棋盘上最高的方块高度
 
     # TODO: 实现各个特征提取逻辑函数
+    def _get_landing_height(self, game: Game, action: BlockStatus) -> int:
+        self.landing_height = _find_y_offset(game.board, action)
+        return self.landing_height
+
+    def _get_eroded_piece_cells(self, game: Game, action: BlockStatus) -> int:
+        full_lines = get_full_lines(game.board)
+
+        # 计算贡献单元格：在刚才放置的那个方块本身包含的单元格中，有多少个是位于被消除掉的那些行里的
+        contributed_to_lines = list(
+            filter(
+                lambda line_y: self.landing_height
+                <= line_y
+                < self.landing_height + action.rotation.size.height,
+                full_lines,
+            )
+        )
+
+        # 计算总贡献单元格数
+        eliminate_bricks = 0
+        for cell in action.rotation.occupied:
+            # 计算该单元格在消除行中的贡献
+            for line_y in contributed_to_lines:
+                if cell.y + self.landing_height == line_y:
+                    eliminate_bricks += 1
+
+        self.eroded_piece_cells = len(contributed_to_lines) * eliminate_bricks
+
+        return self.eroded_piece_cells
+
+    def _get_row_transitions(self, game: Game) -> int:
+        """
+        计算行转换数
+
+        :param game: 游戏对象
+        :return: 行转换数
+        """
+        board = game.board
+        transitions = 0
+        
+        for row in range(board.size.height):
+            for index, block in enumerate(
+                board.squares[row][0 : board.size.width]
+            ):  # 只检查到倒数第二列
+                # 检查每个方块与右边的方块是否存在转换
+                if (block is None) != (board.squares[row][index + 1] is None):
+                    transitions += 1
+        
+        self.row_transitions = len(get_full_lines(board)) * transitions
+        return self.row_transitions
+    
+    def _get_column_transitions(self, game: Game) -> int:
+        """
+        计算列转换数
+
+        :param game: 游戏对象
+        :return: 列转换数
+        """
+        board = game.board
+        transitions = 0
+        
+        for col in range(board.size.width):
+            for row in range(board.size.height - 1):  # 只检查到倒数第二行
+                # 检查每个方块与下边的方块是否存在转换
+                if (board.squares[row][col] is None) != (
+                    board.squares[row + 1][col] is None
+                ):
+                    transitions += 1
+                    
+        self.column_transitions = len(get_full_lines(board)) * transitions
+        return self.column_transitions
+    
+    def _get_holes(self, game: Game) -> int:
+        """
+        计算空穴数
+
+        :param game: 游戏对象
+        :return: 空穴数
+        """
+        board = game.board
+        holes = 0
+        
+        for col in range(board.size.width):
+            # 从底部开始检查每一行
+            for row in range(board.size.height):
+                if board.squares[row][col] is None:
+                    # 检查上方是否有方块
+                    if any(
+                        board.squares[r][col] is not None
+                        for r in range(row + 1, board.size.height)
+                    ):
+                        holes += 1
+        
+        self.holes = holes
+        return self.holes
+    
+    def _get_board_wells(self, game: Game) -> int:
+        """
+        计算棋盘井数
+
+        :param game: 游戏对象
+        :return: 棋盘井数
+        """
+        board = game.board
+        depths = []
+        
+        wells_sum = 0
+
+        # 遍历所有列
+        for col in range(board.size.width):
+            current_well_depth = 0
+            
+            # 从上到下检查每个单元格
+            for row in range(board.size.height):
+                # 检查当前单元格是否为空
+                if board.squares[row][col] is None:
+                    # 检查是否是井
+                    is_well = False
+                    
+                    # 中间列：左右邻居必须都被占据
+                    if 0 < col < board.size.width - 1:
+                        is_well = (board.squares[row][col-1] is not None) and (board.squares[row][col+1] is not None)
+                    # 最左列：右邻居必须被占据
+                    elif col == 0:
+                        is_well = board.squares[row][col+1] is not None
+                    # 最右列：左邻居必须被占据
+                    else:  # col == board.size.width - 1
+                        is_well = board.squares[row][col-1] is not None
+                    
+                    if is_well:
+                        # 这是井的一部分
+                        current_well_depth += 1
+                    else:
+                        # 不是井，计算前一个井的惩罚值（如果有的话）
+                        if current_well_depth > 0:
+                            wells_sum += (current_well_depth * (current_well_depth + 1)) // 2
+                            current_well_depth = 0
+                else:
+                    # 单元格被占据，计算前一个井的惩罚值（如果有的话）
+                    if current_well_depth > 0:
+                        wells_sum += (current_well_depth * (current_well_depth + 1)) // 2
+                        current_well_depth = 0
+            
+            # 处理列底部可能剩余的井
+            if current_well_depth > 0:
+                wells_sum += (current_well_depth * (current_well_depth + 1)) // 2
+
+        self.board_wells = wells_sum
+        return self.board_wells
 
     def extract_features(self, game: Game) -> list[float]:
         """
