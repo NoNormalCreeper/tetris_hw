@@ -1,4 +1,6 @@
+from typing import Optional
 from pydantic import BaseModel, SkipValidation
+
 
 class Position(BaseModel):
     """
@@ -7,13 +9,20 @@ class Position(BaseModel):
 
     x: int  # x 坐标
     y: int  # y 坐标
-    
+
     def __init__(self, x=None, y=None, **kwargs):
         # 同时支持位置参数和关键字参数
-        if x is not None and y is None and not kwargs and isinstance(x, (list, tuple)) and len(x) == 2:
+        if (
+            x is not None
+            and y is None
+            and not kwargs
+            and isinstance(x, (list, tuple))
+            and len(x) == 2
+        ):
             super().__init__(x=x[0], y=x[1])
         else:
             super().__init__(x=x, y=y, **kwargs)
+
 
 class Size(BaseModel):
     """
@@ -22,10 +31,16 @@ class Size(BaseModel):
 
     width: int
     height: int
-    
+
     def __init__(self, width=None, height=None, **kwargs):
         # 同时支持位置参数和关键字参数
-        if width is not None and height is None and not kwargs and isinstance(width, (list, tuple)) and len(width) == 2:
+        if (
+            width is not None
+            and height is None
+            and not kwargs
+            and isinstance(width, (list, tuple))
+            and len(width) == 2
+        ):
             super().__init__(width=width[0], height=width[1])
         else:
             super().__init__(width=width, height=height, **kwargs)
@@ -48,7 +63,7 @@ class BlockStatus(BaseModel):
 
     x_offset: int  # 方块在棋盘上的 x 坐标
     rotation: BlockRoatation
-    assessment_score: float  # 评估分数
+    assessment_score: Optional[float]  # 评估分数
 
 
 class Block(BaseModel):
@@ -112,7 +127,7 @@ class Board(BaseModel):
     棋盘的上下文信息和配置
     """
 
-    block_types: list[Block]  # 棋盘上可用的方块类型
+    # block_types: list[Block]  # 棋盘上可用的方块类型
     size: Size  # 棋盘可操作空间大小，高度为死亡判定线减 1
     squares: list[list[Block]]  # 棋盘上的小方块矩阵
 
@@ -125,10 +140,22 @@ class Game(BaseModel):
     config: GameConfig  # 游戏配置
 
     board: Board  # 棋盘当前状态
-    score: int  # 当前分数
+    score: int  # 当前分数，若为负数则表示游戏结束
 
     upcoming_blocks: list[Block]  # 即将出现的方块列表，共 2 个
     available_states: list[BlockStatus]  # 可用的方块状态列表
+
+    def end(self) -> bool:
+        """
+        判断游戏是否结束
+        """
+        return self.score < 0
+
+    def set_end(self) -> None:
+        """
+        结束游戏
+        """
+        self.score *= -1
 
 
 class Context(BaseModel):
