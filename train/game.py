@@ -147,6 +147,46 @@ def _find_y_offset(board: Board, action: BlockStatus) -> int:
     # 如果没有找到合适的 y 坐标，说明已经放不下了，返回游戏结束
     return -1
 
+def get_full_lines(board: Board) -> list[int]:
+    """
+    获取填满的行
+
+    :param board: 棋盘对象
+    :return: 填满行的 y 坐标列表
+    """
+    
+    # 遍历棋盘，找到满行
+    full_lines = []
+    for line in range(board.size.height):
+        if all(board.squares[line][x] is not None for x in range(board.size.width)):
+            full_lines.append(line)
+            
+    return full_lines
+
+
+def _eliminate_lines(board: Board) -> int:
+    """
+    （产生副作用）消除以一次操作后的满行，并返回消除的行数
+
+    :param board: 棋盘对象
+    :return: 消除的行数
+    """
+    
+    full_lines = get_full_lines(board)
+    # 消除满行
+    for line in full_lines:
+        for x in range(board.size.width):
+            board.squares[line][x] = None
+
+    # 下移上面的行
+    for line in full_lines:
+        for y in range(line + 1, board.size.height):
+            for x in range(board.size.width):   # 移动
+                board.squares[y - 1][x] = board.squares[y][x]
+                board.squares[y][x] = None
+
+    return len(full_lines)
+
 
 def execute_action(ctx: Context, action: BlockStatus) -> Game:
     """
