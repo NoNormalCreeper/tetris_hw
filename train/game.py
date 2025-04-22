@@ -1,4 +1,15 @@
-from models import BlockStatus, Context, Game, GameConfig, Board, Size, Block
+from models import (
+    AssessmentModel,
+    BlockStatus,
+    Context,
+    Game,
+    GameConfig,
+    Board,
+    Size,
+    Block,
+    FeatureExtractor,
+    Strategy,
+)
 
 from constants import k_blocks
 
@@ -17,11 +28,12 @@ def calculate_linear_function(params: list[float], vector: list[float]) -> float
         raise ValueError("参数列表和向量列表的长度不一致")
     return sum(p * v for p, v in zip(params, vector))
 
-class FeatureExtractor:
+
+class DbtFeatureExtractor(FeatureExtractor):
     """
-    特征提取器
+    DBT 特征提取器
     """
-    
+
     # Dellacherie 特征
     landing_height: int = 0  # 着陆高度
     eroded_piece_cells: int = 0  # 被侵蚀的方块数量，消除行数*消除的砖块数
@@ -29,15 +41,12 @@ class FeatureExtractor:
     column_transitions: int = 0  # 从空到满或反之的列转换方块数
     holes: int = 0  # 空穴数量
     board_wells: int = 0  # 棋盘井数量
-    
-    # B-T 特征
+
+    # B-T 特征，最终返回值中不应有嵌套数组，而是展开为一维数组
     column_heights: list[int] = []  # 每列高度，长度为 width
     column_differences: list[int] = []  # 每列高度差绝对值，长度为 width-1
     maximum_height: int = 0  # 棋盘上最高的方块高度
 
-    def __init__(self, params: list[float]):
-        self.params = params
-        
     # TODO: 实现各个特征提取逻辑函数
 
     def extract_features(self, game: Game) -> list[float]:
@@ -47,8 +56,16 @@ class FeatureExtractor:
         :param game: 游戏对象
         :return: 特征向量
         """
-        
+
         return []
+
+
+my_assessment_model = AssessmentModel(
+    length=28,  # 特征向量长度
+    weights=[0.0] * 28,  # 权重初始化为 0
+    feature_extractor=DbtFeatureExtractor(),  # 特征提取器实例化
+)
+
 
 def get_new_upcoming(ctx: Context) -> list[Block]:
     """
@@ -69,20 +86,73 @@ def get_new_upcoming(ctx: Context) -> list[Block]:
     return [block1, block2]
 
 
+def _is_collision(board: Board, action: BlockStatus, y_offset: int) -> bool:
+    """
+    判断是否发生碰撞
+
+    :param board: 棋盘对象
+    :param action: 方块状态
+    :param y_offset: 方块在棋盘上的 y 坐标
+    :return: 是否发生碰撞
+    """
+    # 获取方块的旋转状态
+    rotation = action.rotation
+    occupied = rotation.occupied
+
+    # 遍历方块的占用位置
+    for pos in occupied:
+        # 计算实际的 x 和 y 坐标
+        x = action.x_offset + pos.x
+        y = y_offset + pos.y
+
+        # 判断是否越界或碰撞
+        if x < 0 or x >= board.size.width or y < 0 or y >= board.size.height:
+            return True
+        if board.squares[y][x] is not None:
+            return True
+
+    return False
+
 
 def execute_action(ctx: Context, action: BlockStatus) -> Game:
     """
     模拟执行动作（没有实际执行的副作用）
+    若抛出异常，则可能是这种动作可能不合法，需要剔除该枚举的可能性
 
     :param ctx: 传入一个游戏中的上下文对象
     :param action: 要执行的动作
     :return: 更新后的游戏状态
     """
-    
-    # TODO: 实现动作执行逻辑
-    
-    return ctx.game
 
+    # TODO: 实现动作执行逻辑
+    # 创建一个临时的 Game 对象用于操作
+    new_game = ctx.game.model_copy(deep=True)
+    board = new_game.board
+
+    # 判断传入的参数是否越界
+    rotation = action.rotation
+    width = rotation.size.width
+    if (action.x_offset < width) or (action.x_offset + width > board.size.width):
+        raise ValueError("x_offset 越界")
+
+    # 判断下落后的 y 坐标，以恰好不碰撞为准
+
+    return new_game
+
+
+def new_game() -> Game:
+    """
+    创建一个新的游戏对象
+
+    :return: Game对象
+    """
+    return Game(
+        config=GameConfig(awards=[1, 3, 5, 8], available_blocks=k_blocks),
+        board=Board(size=Size(10, 14)),
+        score=0,
+        upcoming_blocks=[],
+        available_states=[],
+    )
 
 
 def run_game(ctx: Context) -> None:
@@ -93,10 +163,11 @@ def run_game(ctx: Context) -> None:
     :return: None
     """
     # 初始化游戏
-    ctx.game = Game(
-        config=GameConfig(awards=[1, 3, 5, 8], available_blocks=k_blocks),
-        board=Board(block_types=k_blocks, size=Size(10, 14), squares=[]),
-        score=0,
-        upcoming_blocks=[],
-        available_states=[],
+
+
+if __name__ == "__main__":
+    # 测试代码
+    ctx = Context(
+        game=new_game(), strategy=Strategy(assessment_model=my_assessment_model)
     )
+    run_game(ctx)

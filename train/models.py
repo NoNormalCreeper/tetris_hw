@@ -76,6 +76,18 @@ class Block(BaseModel):
     status_count: int  # 方块状态的数量
     rotations: list[BlockRoatation]  # 方块的可用旋转模式列表
 
+class FeatureExtractor(BaseModel):
+    """
+    特征提取器的基类
+    """
+
+    def extract_features(self, game: "Game") -> list[float]:
+        """
+        提取特征
+        :param game: 游戏对象
+        :return: 特征向量
+        """
+        raise NotImplementedError("Feature extraction not implemented.")
 
 class AssessmentModel(BaseModel):
     """
@@ -85,9 +97,10 @@ class AssessmentModel(BaseModel):
     length: int  # 参数个数
     weights: list[float]  # 权重
 
-    from typing import Callable
+    # from typing import Callable
 
-    param_functions: list[Callable[["Game"], float]]  # 获取参数的函数，Game -> float
+    # param_functions: list[Callable[["Game"], float]]  # 获取参数的函数，Game -> float
+    feature_extractor: FeatureExtractor
     # params: list[float]  # 模型参数
 
     class Config:
@@ -129,7 +142,15 @@ class Board(BaseModel):
 
     # block_types: list[Block]  # 棋盘上可用的方块类型
     size: Size  # 棋盘可操作空间大小，高度为死亡判定线减 1
-    squares: list[list[Block]]  # 棋盘上的小方块矩阵
+    squares: list[list[Optional[Block]]]  # 棋盘上的小方块矩阵
+    
+    def __init__(self, size: Size, **kwargs):
+        # 初始化棋盘 - 先创建squares，再传入super().__init__
+        squares = [
+            [None for _ in range(size.width)]
+            for _ in range(size.height)
+        ]
+        super().__init__(size=size, squares=squares, **kwargs)
 
 
 class Game(BaseModel):
@@ -165,3 +186,4 @@ class Context(BaseModel):
 
     game: Game  # 游戏上下文
     strategy: Strategy  # 策略上下文
+
