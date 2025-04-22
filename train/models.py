@@ -54,6 +54,31 @@ class BlockRoatation(BaseModel):
     label: str  # 该状态的标签
     size: Size  # 该状态的大小
     occupied: list[Position]  # 占用的格子相对坐标，以左下角为原点
+    
+    def __eq__(self, other: object) -> bool:
+        """
+        重载 == 运算符
+        
+        :param other: 另一个对象
+        :return: 是否相等
+        """
+        if not isinstance(other, BlockRoatation):
+            return False
+        return self.label == other.label and self.size == other.size and self.occupied == other.occupied
+    
+    def get_original_block(self, block_list: list["Block"]) -> "Block":
+        """
+        获取原始方块
+        
+        :param block_list: 方块列表
+        :return: 原始方块
+        """
+        
+        for block in block_list:
+            for rotation in block.rotations:
+                if self == rotation:
+                    return block
+        raise ValueError("No matching block found.")
 
 
 class BlockStatus(BaseModel):
@@ -148,7 +173,7 @@ class Board(BaseModel):
         # 初始化棋盘 - 先创建squares，再传入super().__init__
         squares = [
             [None for _ in range(size.width)]
-            for _ in range(size.height)
+            for _ in range(size.height + 5) # 防止超出死亡判定线的越界情况
         ]
         super().__init__(size=size, squares=squares, **kwargs)
 

@@ -113,6 +113,40 @@ def _is_collision(board: Board, action: BlockStatus, y_offset: int) -> bool:
 
     return False
 
+def _is_overflow(board: Board, action: BlockStatus, y_offset: int) -> bool:
+    """
+    判断放下该方块后，是否到达死亡线。不负责判断碰撞，请在调用前判断碰撞
+    
+    :param board: 棋盘对象
+    :param action: 方块状态
+    :param y_offset: 方块在棋盘上的 y 坐标
+    :return: 是否到达死亡线
+    """
+    
+    return y_offset + action.rotation.size.height >= board.size.height
+
+def _find_y_offset(board: Board, action: BlockStatus) -> int:
+    """
+    找到放下该方块后，y 坐标的值
+    
+    :param board: 棋盘对象
+    :param action: 方块状态
+    :return: y 坐标；若因此游戏结束，则返回 -1
+    """
+
+    # 遍历方块的占用位置
+    for y_offset in range(board.size.height):
+        if not _is_collision(board, action, y_offset):
+            if not _is_overflow(board, action, y_offset):
+                # 如果没有碰撞，没有到达死亡线，说明可以放下
+                return y_offset
+            else:
+                # 能放下，但是到达了死亡线
+                return -1
+    
+    # 如果没有找到合适的 y 坐标，说明已经放不下了，返回游戏结束
+    return -1
+
 
 def execute_action(ctx: Context, action: BlockStatus) -> Game:
     """
@@ -136,6 +170,18 @@ def execute_action(ctx: Context, action: BlockStatus) -> Game:
         raise ValueError("x_offset 越界")
 
     # 判断下落后的 y 坐标，以恰好不碰撞为准
+    y_offset = _find_y_offset(board, action)
+    
+    if y_offset == -1:
+        # 游戏结束
+        new_game.set_end()
+        return new_game
+    
+    # 填充棋盘
+    for pos in rotation.occupied:
+        x = action.x_offset + pos.x
+        y = y_offset + pos.y
+        board.squares[y][x] = action.rotation.get_original_block(k_blocks)
 
     return new_game
 
