@@ -53,6 +53,14 @@ class DbtFeatureExtractor(FeatureExtractor):
         return self.landing_height
 
     def _get_eroded_piece_cells(self, game: Game, action: BlockStatus) -> int:
+        """
+        计算被侵蚀的方块数量
+        需要在调用 _get_landing_height 之后调用
+        
+        :param game: 游戏对象
+        :param action: 方块状态
+        :return: 被侵蚀的方块数量
+        """
         full_lines = get_full_lines(game.board)
 
         # 计算贡献单元格：在刚才放置的那个方块本身包含的单元格中，有多少个是位于被消除掉的那些行里的
@@ -196,6 +204,58 @@ class DbtFeatureExtractor(FeatureExtractor):
 
         self.board_wells = wells_sum
         return self.board_wells
+    
+    def _get_column_heights(self, game: Game) -> list[int]:
+        """
+        计算每列的高度
+
+        :param game: 游戏对象
+        :return: 每列的高度列表
+        """
+        board = game.board
+        heights = []
+        
+        for col in range(board.size.width):
+            height = 0
+            
+            # 从顶部到底部检查每个单元格
+            for row in range(board.size.height):
+                # 检查当前单元格是否被占据
+                if board.squares[row][col] is not None:
+                    height = board.size.height - row
+                    break
+            heights.append(height)
+        
+        self.column_heights = heights
+        return self.column_heights
+    
+    def _get_column_differences(self, game: Game) -> list[int]:
+        """
+        计算每列的高度差绝对值
+        需要在调用 _get_column_heights 之后调用
+
+        :param game: 游戏对象
+        :return: 每列的高度差绝对值列表
+        """
+        heights = self.column_heights
+        differences = []
+        
+        for i in range(len(heights) - 1):
+            differences.append(abs(heights[i] - heights[i + 1]))
+        
+        self.column_differences = differences
+        return self.column_differences
+    
+    def _get_maximum_height(self, game: Game) -> int:
+        """
+        计算棋盘上最高的方块高度
+
+        :param game: 游戏对象
+        :return: 棋盘上最高的方块高度
+        """
+        heights = self.column_heights
+        self.maximum_height = max(heights)
+        return self.maximum_height
 
     def extract_features(self, game: Game) -> list[float]:
         """
