@@ -106,10 +106,12 @@ class FeatureExtractor(BaseModel):
     特征提取器的基类
     """
 
-    def extract_features(self, game: "Game") -> list[float]:
+    def extract_features(self, game: "Game", action: BlockStatus) -> list[int]:
         """
-        提取特征
+        提取执行完操作后的特征值
+        
         :param game: 游戏对象
+        :param action: 将要执行的操作
         :return: 特征向量
         """
         raise NotImplementedError("Feature extraction not implemented.")
