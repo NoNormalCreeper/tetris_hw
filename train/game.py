@@ -5,6 +5,7 @@ from models import (
     Game,
     GameConfig,
     Board,
+    Position,
     Size,
     Block,
     FeatureExtractor,
@@ -61,6 +62,10 @@ class DbtFeatureExtractor(FeatureExtractor):
     column_heights: list[int] = []  # 每列高度，长度为 width
     column_differences: list[int] = []  # 每列高度差绝对值，长度为 width-1
     maximum_height: int = 0  # 棋盘上最高的方块高度
+    
+    # 论文作者引入的新的两个特征值
+    hole_depth: int = 0
+    rows_with_holes: int = 0
     
     new_game: Game = create_new_game()  # 新的游戏对象
 
@@ -151,27 +156,48 @@ class DbtFeatureExtractor(FeatureExtractor):
         self.column_transitions = len(get_full_lines(board)) * transitions
         return self.column_transitions
     
+    def __get_hole_depth(self, hole: Position) -> int:
+        """
+        计算一个空穴的深度
+
+        :param hole: 空穴位置
+        :return: 空穴深度
+        """
+        board = self.new_game.board
+        depth = 0
+        
+        # 从空穴位置向上检查
+        for row in range(hole.y + 1, board.size.height):
+            if board.squares[row][hole.x] is not None:
+                depth += 1
+            else:
+                return depth
+    
     def _get_holes(self) -> int:
         """
-        计算空穴数
+        计算空穴数。
+        同时会计算空穴深度、含空穴的行数
 
         :return: 空穴数
         """
         board = self.new_game.board
-        holes = 0
+        # holes = 0
+        depths = []
+        rows_with_holes = set()
         
         for col in range(board.size.width):
             # 从底部开始检查每一行
             for row in range(board.size.height):
+                # 检查当前单元格是否为空
                 if board.squares[row][col] is None:
-                    # 检查上方是否有方块
-                    if any(
-                        board.squares[r][col] is not None
-                        for r in range(row + 1, board.size.height)
-                    ):
-                        holes += 1
+                    # 计算空穴深度
+                    depth = self.__get_hole_depth(Position(col, row))
+                    depths.append(depth)
+                    rows_with_holes.add(row)
         
-        self.holes = holes
+        self.hole_depth = sum(depths)
+        self.rows_with_holes = len(rows_with_holes)
+        self.holes = len(depths)
         return self.holes
     
     def _get_board_wells(self) -> int:
@@ -284,7 +310,12 @@ class DbtFeatureExtractor(FeatureExtractor):
         :return: 特征向量
         """
 
-        self._init_new_game(game, action)
+        try:
+            self._init_new_game(game, action)
+        except ValueError:
+            # 代表该状态无法进行游戏（死亡或越界），继续向上抛错误来处理，代表不应该执行该操作
+            raise ValueError("游戏结束或越界")
+        
         self._get_landing_height(action)
         self._get_eroded_piece_cells(action)
         self._get_row_transitions()
@@ -296,24 +327,42 @@ class DbtFeatureExtractor(FeatureExtractor):
         self._get_maximum_height()
         
         # 特征向量
-        feature_vector = [
+        feature_vector = [  # 28 维
             self.landing_height,
             self.eroded_piece_cells,
             self.row_transitions,
             self.column_transitions,
             self.holes,
             self.board_wells,
+            self.hole_depth,
+            self.rows_with_holes,
             *self.column_heights,
             *self.column_differences,
             self.maximum_height,
         ]
         
+        # 清除所有数据便于下次使用
+        self.landing_height = 0
+        self.eroded_piece_cells = 0
+        self.row_transitions = 0
+        self.column_transitions = 0
+        self.holes = 0
+        self.board_wells = 0
+        self.hole_depth = 0
+        self.rows_with_holes = 0
+        self.column_heights = []
+        self.column_differences = []
+        self.maximum_height = 0
+        self.new_game = create_new_game()
+        
+        # 返回结果
         return feature_vector
 
 
 my_assessment_model = AssessmentModel(
     length=28,  # 特征向量长度
-    weights=[0.0] * 28,  # 权重初始化为 0
+    # weights=[0.0] * 28,  # 权重初始化为 0
+    weights=[-12.63, 6.60, -9.22, -19.77, -13.08, -10.49, -1.61, -24.04] + [0.0] * 20,
     feature_extractor=DbtFeatureExtractor(),  # 特征提取器实例化
 )
 
