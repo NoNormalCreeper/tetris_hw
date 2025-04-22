@@ -16,7 +16,22 @@ from constants import k_blocks
 import random
 
 
-def calculate_linear_function(params: list[float], vector: list[float]) -> float:
+def create_new_game() -> Game:
+    """
+    创建一个新的游戏对象
+
+    :return: Game对象
+    """
+    return Game(
+        config=GameConfig(awards=[1, 3, 5, 8], available_blocks=k_blocks),
+        board=Board(size=Size(10, 14)),
+        score=0,
+        upcoming_blocks=[],
+        available_states=[],
+    )
+
+
+def calculate_linear_function(params: list[float | int], vector: list[float | int]) -> float:
     """
     计算线性函数
 
@@ -46,22 +61,33 @@ class DbtFeatureExtractor(FeatureExtractor):
     column_heights: list[int] = []  # 每列高度，长度为 width
     column_differences: list[int] = []  # 每列高度差绝对值，长度为 width-1
     maximum_height: int = 0  # 棋盘上最高的方块高度
+    
+    new_game: Game = create_new_game()  # 新的游戏对象
 
-    # TODO: 实现各个特征提取逻辑函数
-    def _get_landing_height(self, game: Game, action: BlockStatus) -> int:
-        self.landing_height = _find_y_offset(game.board, action)
+    def _init_new_game(self, game: Game, action: BlockStatus) -> None:
+        """
+        （仅有副作用）拷贝一个新的游戏对象，执行 action 后存储，用于后续操作
+
+        :param game: 执行过操作的游戏对象
+        :param action: 执行的操作
+        :return: None
+        """
+        self.new_game = game.model_copy(deep=True)
+        self.new_game = execute_action(self.new_game, action)
+        
+    def _get_landing_height(self, action: BlockStatus) -> int:
+        self.landing_height = _find_y_offset(self.new_game.board, action)
         return self.landing_height
 
-    def _get_eroded_piece_cells(self, game: Game, action: BlockStatus) -> int:
+    def _get_eroded_piece_cells(self, action: BlockStatus) -> int:
         """
         计算被侵蚀的方块数量
         需要在调用 _get_landing_height 之后调用
         
-        :param game: 游戏对象
         :param action: 方块状态
         :return: 被侵蚀的方块数量
         """
-        full_lines = get_full_lines(game.board)
+        full_lines = get_full_lines(self.new_game.board)
 
         # 计算贡献单元格：在刚才放置的那个方块本身包含的单元格中，有多少个是位于被消除掉的那些行里的
         contributed_to_lines = list(
@@ -85,14 +111,13 @@ class DbtFeatureExtractor(FeatureExtractor):
 
         return self.eroded_piece_cells
 
-    def _get_row_transitions(self, game: Game) -> int:
+    def _get_row_transitions(self) -> int:
         """
         计算行转换数
 
-        :param game: 游戏对象
         :return: 行转换数
         """
-        board = game.board
+        board = self.new_game.board
         transitions = 0
         
         for row in range(board.size.height):
@@ -106,14 +131,13 @@ class DbtFeatureExtractor(FeatureExtractor):
         self.row_transitions = len(get_full_lines(board)) * transitions
         return self.row_transitions
     
-    def _get_column_transitions(self, game: Game) -> int:
+    def _get_column_transitions(self) -> int:
         """
         计算列转换数
 
-        :param game: 游戏对象
         :return: 列转换数
         """
-        board = game.board
+        board = self.new_game.board
         transitions = 0
         
         for col in range(board.size.width):
@@ -127,14 +151,13 @@ class DbtFeatureExtractor(FeatureExtractor):
         self.column_transitions = len(get_full_lines(board)) * transitions
         return self.column_transitions
     
-    def _get_holes(self, game: Game) -> int:
+    def _get_holes(self) -> int:
         """
         计算空穴数
 
-        :param game: 游戏对象
         :return: 空穴数
         """
-        board = game.board
+        board = self.new_game.board
         holes = 0
         
         for col in range(board.size.width):
@@ -151,14 +174,13 @@ class DbtFeatureExtractor(FeatureExtractor):
         self.holes = holes
         return self.holes
     
-    def _get_board_wells(self, game: Game) -> int:
+    def _get_board_wells(self) -> int:
         """
         计算棋盘井数
 
-        :param game: 游戏对象
         :return: 棋盘井数
         """
-        board = game.board
+        board = self.new_game.board
         depths = []
         
         wells_sum = 0
@@ -205,14 +227,13 @@ class DbtFeatureExtractor(FeatureExtractor):
         self.board_wells = wells_sum
         return self.board_wells
     
-    def _get_column_heights(self, game: Game) -> list[int]:
+    def _get_column_heights(self) -> list[int]:
         """
         计算每列的高度
 
-        :param game: 游戏对象
         :return: 每列的高度列表
         """
-        board = game.board
+        board = self.new_game.board
         heights = []
         
         for col in range(board.size.width):
@@ -229,12 +250,11 @@ class DbtFeatureExtractor(FeatureExtractor):
         self.column_heights = heights
         return self.column_heights
     
-    def _get_column_differences(self, game: Game) -> list[int]:
+    def _get_column_differences(self) -> list[int]:
         """
         计算每列的高度差绝对值
         需要在调用 _get_column_heights 之后调用
 
-        :param game: 游戏对象
         :return: 每列的高度差绝对值列表
         """
         heights = self.column_heights
@@ -246,18 +266,17 @@ class DbtFeatureExtractor(FeatureExtractor):
         self.column_differences = differences
         return self.column_differences
     
-    def _get_maximum_height(self, game: Game) -> int:
+    def _get_maximum_height(self) -> int:
         """
         计算棋盘上最高的方块高度
 
-        :param game: 游戏对象
         :return: 棋盘上最高的方块高度
         """
         heights = self.column_heights
         self.maximum_height = max(heights)
         return self.maximum_height
 
-    def extract_features(self, game: Game) -> list[float]:
+    def extract_features(self, game: Game, action: BlockStatus) -> list[int]:
         """
         提取特征
 
@@ -265,7 +284,31 @@ class DbtFeatureExtractor(FeatureExtractor):
         :return: 特征向量
         """
 
-        return []
+        self._init_new_game(game, action)
+        self._get_landing_height(action)
+        self._get_eroded_piece_cells(action)
+        self._get_row_transitions()
+        self._get_column_transitions()
+        self._get_holes()
+        self._get_board_wells()
+        self._get_column_heights()
+        self._get_column_differences()
+        self._get_maximum_height()
+        
+        # 特征向量
+        feature_vector = [
+            self.landing_height,
+            self.eroded_piece_cells,
+            self.row_transitions,
+            self.column_transitions,
+            self.holes,
+            self.board_wells,
+            *self.column_heights,
+            *self.column_differences,
+            self.maximum_height,
+        ]
+        
+        return feature_vector
 
 
 my_assessment_model = AssessmentModel(
@@ -275,22 +318,22 @@ my_assessment_model = AssessmentModel(
 )
 
 
-def get_new_upcoming(ctx: Context) -> list[Block]:
+def get_new_upcoming(game: Game) -> list[Block]:
     """
     获取新的即将出现的方块
 
-    :param ctx: 传入一个游戏中的上下文对象
+    :param game: 游戏对象
     :return: 新的即将出现的方块列表
     """
     # 如果游戏未开始
-    if ctx.game.upcoming_blocks == []:
+    if game.upcoming_blocks == []:
         # 随机选择两个方块
-        block1 = random.choice(ctx.game.config.available_blocks)
-        block2 = random.choice(ctx.game.config.available_blocks)
+        block1 = random.choice(game.config.available_blocks)
+        block2 = random.choice(game.config.available_blocks)
     else:
         # 如果游戏已经开始，使用当前的即将出现的方块
-        block1 = ctx.game.upcoming_blocks[0]
-        block2 = ctx.game.upcoming_blocks[1]
+        block1 = game.upcoming_blocks[0]
+        block2 = game.upcoming_blocks[1]
     return [block1, block2]
 
 
@@ -396,7 +439,7 @@ def _eliminate_lines(board: Board) -> int:
     return len(full_lines)
 
 
-def execute_action(ctx: Context, action: BlockStatus) -> Game:
+def execute_action(game: Game, action: BlockStatus) -> Game:
     """
     模拟执行动作（没有实际执行的副作用）
     若抛出异常，则可能是这种动作可能不合法，需要剔除该枚举的可能性
@@ -408,7 +451,7 @@ def execute_action(ctx: Context, action: BlockStatus) -> Game:
 
     # TODO: 实现动作执行逻辑
     # 创建一个临时的 Game 对象用于操作
-    new_game = ctx.game.model_copy(deep=True)
+    new_game = game.model_copy(deep=True)
     board = new_game.board
 
     # 判断传入的参数是否越界
@@ -422,6 +465,7 @@ def execute_action(ctx: Context, action: BlockStatus) -> Game:
     
     if y_offset == -1:
         # 游戏结束
+        # 只要这里超出了死亡线，再怎么消除都没用，所以可以直接就在这结束了
         new_game.set_end()
         return new_game
     
@@ -430,23 +474,19 @@ def execute_action(ctx: Context, action: BlockStatus) -> Game:
         x = action.x_offset + pos.x
         y = y_offset + pos.y
         board.squares[y][x] = action.rotation.get_original_block(k_blocks)
+    
+    # 消除满行
+    eliminated_lines = _eliminate_lines(board)
+    
+    # 更新分数
+    if eliminated_lines > 0:
+        new_game.score += int(new_game.config.awards[eliminated_lines - 1]) * 100
+        
+    # 更新即将出现的方块
+    new_game.upcoming_blocks = get_new_upcoming(new_game)
 
     return new_game
 
-
-def new_game() -> Game:
-    """
-    创建一个新的游戏对象
-
-    :return: Game对象
-    """
-    return Game(
-        config=GameConfig(awards=[1, 3, 5, 8], available_blocks=k_blocks),
-        board=Board(size=Size(10, 14)),
-        score=0,
-        upcoming_blocks=[],
-        available_states=[],
-    )
 
 
 def run_game(ctx: Context) -> None:
@@ -462,6 +502,6 @@ def run_game(ctx: Context) -> None:
 if __name__ == "__main__":
     # 测试代码
     ctx = Context(
-        game=new_game(), strategy=Strategy(assessment_model=my_assessment_model)
+        game=create_new_game(), strategy=Strategy(assessment_model=my_assessment_model)
     )
     run_game(ctx)
