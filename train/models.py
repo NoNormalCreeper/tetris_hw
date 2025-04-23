@@ -178,6 +178,14 @@ class Board(BaseModel):
             for _ in range(size.height + 5) # 防止超出死亡判定线的越界情况
         ]
         super().__init__(size=size, squares=squares, **kwargs)
+    
+    def can_clear_line(self, y: int) -> bool:
+        """
+        判断是否可以消除一行
+        :param y: 行号
+        :return: 是否可以消除
+        """
+        return all(self.squares[y][x] is not None for x in range(self.size.width))
 
 
 class Game(BaseModel):
