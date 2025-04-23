@@ -466,6 +466,15 @@ def _find_y_offset(board: Board, action: BlockStatus) -> int:
     # 如果没有找到合适的 y 坐标，说明已经放不下了，返回游戏结束
     return -1
 
+def _is_full_line(line: list[Optional[Block]]) -> bool:
+    """
+    判断一行是否满了
+
+    :param line: 一行的方块列表
+    :return: 是否满了
+    """
+    return all(cell is not None for cell in line)
+
 def get_full_lines(board: Board) -> list[int]:
     """
     获取填满的行
@@ -477,44 +486,75 @@ def get_full_lines(board: Board) -> list[int]:
     # 遍历棋盘，找到满行
     full_lines = []
     for line in range(board.size.height):
-        if all(board.squares[line][x] is not None for x in range(board.size.width)):
+        if _is_full_line(board.squares[line]):
             full_lines.append(line)
             
     return full_lines
 
+def _move_down_line(board: Board, line_index: int) -> None:
+    """
+    （产生副作用）将指定行下移一行
+
+    :param board: 棋盘对象
+    :param line_index: 行索引
+    :return: None
+    """
+    
+    # 将指定行下移一行
+    board.squares[line_index - 1] = board.squares[line_index]
+    # 清空下移后的行
+    board.squares[line_index] = [None for _ in range(board.size.width)]
 
 def _eliminate_lines(board: Board) -> int:
     """
-    （产生副作用）消除以一次操作后的满行，并返回消除的行数
+    （产生副作用）消除一次操作后的满行，并返回消除的行数
+    (适用于 y=0 在底部的坐标系)
 
     :param board: 棋盘对象
     :return: 消除的行数
     """
     
-    full_lines = get_full_lines(board)
-    # 消除满行
-    for line in full_lines:
-        for x in range(board.size.width):
-            board.squares[line][x] = None
+    full_lines = get_full_lines(board) # Gets y-indices of full lines (0 is bottom)
+    num_full_lines = len(full_lines)
+    
+    if num_full_lines == 0:
+        return 0
+    
+    # 使用双指针法，原地修改棋盘 (从下往上处理)
+    # write_index 指向下一个非满行的写入位置 (从底部开始)
+    # read_index 指向当前读取的行 (从底部开始)
+    write_index = 0 
+    
+    # 从下往上读取棋盘
+    for read_index in range(board.size.height):
+        # 如果当前行不是满行
+        if read_index not in full_lines:
+            # 如果读写指针不一致，则将非满行复制到写入位置
+            # (将 read_index 的内容移动到 write_index)
+            if write_index != read_index:
+                board.squares[write_index] = board.squares[read_index]
+            # 移动写入指针 (向上移动)
+            write_index += 1
+            
+    # 清空顶部的行（这些行是由于消除满行而空出来的）
+    # write_index 现在是第一个空行的索引
+    for i in range(write_index, board.size.height):
+        board.squares[i] = [None] * board.size.width
+        
+    return num_full_lines
+    
 
-    # 下移上面的行
-    for line in full_lines:
-        for y in range(line + 1, board.size.height):
-            for x in range(board.size.width):   # 移动
-                board.squares[y - 1][x] = board.squares[y][x]
-                board.squares[y][x] = None
 
-    return len(full_lines)
-
-
-def execute_action(game: Game, action: BlockStatus) -> Game:
+def execute_action(game: Game, action: BlockStatus, eliminate=True) -> tuple[Game, int]:
     """
     模拟执行动作（没有实际执行的副作用）
     若抛出异常，则可能是这种动作可能不合法，需要剔除该枚举的可能性
 
     :param ctx: 传入一个游戏中的上下文对象
     :param action: 要执行的动作
-    :return: 更新后的游戏状态
+    :param eliminate: 是否消除满行并加分，默认为 True。若为 False，仅返回下落后的结果
+    :return Game: 执行后的游戏对象
+    :return int: 方块在棋盘上的 y 坐标
     """
 
     # TODO: 实现动作执行逻辑
@@ -525,7 +565,7 @@ def execute_action(game: Game, action: BlockStatus) -> Game:
     # 判断传入的参数是否越界
     rotation = action.rotation
     width = rotation.size.width
-    if (action.x_offset < width) or (action.x_offset + width > board.size.width):
+    if (action.x_offset < 0) or (action.x_offset + width > board.size.width):
         raise ValueError("x_offset 越界")
 
     # 判断下落后的 y 坐标，以恰好不碰撞为准
@@ -544,17 +584,17 @@ def execute_action(game: Game, action: BlockStatus) -> Game:
         y = y_offset + pos.y
         board.squares[y][x] = action.rotation.get_original_block(k_blocks)
     
-    # 消除满行
-    eliminated_lines = _eliminate_lines(board)
-    
-    # 更新分数
-    if eliminated_lines > 0:
-        new_game.score += int(new_game.config.awards[eliminated_lines - 1]) * 100
+    # 消除满行，更新分数
+    if eliminate:
+        eliminated_lines = _eliminate_lines(board)
+        
+        if eliminated_lines > 0:
+            new_game.score += int(new_game.config.awards[eliminated_lines - 1]) * 100
         
     # 更新即将出现的方块
     new_game.upcoming_blocks = get_new_upcoming(new_game)
 
-    return new_game
+    return (new_game, y_offset)
 
 
 def all_actions(block: Block) -> list[BlockStatus]:
