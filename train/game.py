@@ -1,4 +1,5 @@
 from datetime import datetime
+import time
 from icecream import ic
 from typing import Optional
 from models import (
@@ -236,30 +237,43 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
 
     def _get_holes(self) -> int:
         """
-        计算空穴数。
-        同时会计算空穴深度、含空穴的行数
+        计算空穴数、总空穴深度、含空穴的行数 (优化版)
 
         :return: 空穴数
         """
         board = self.new_game.board
-        # holes = 0
-        depths = []
-        rows_with_holes = set()
+        width = board.size.width
+        # Use the actual height of the squares list, which might include buffer rows
+        board_height = len(board.squares)
+        squares = board.squares
 
-        for col in range(board.size.width):
-            # 从底部开始检查每一行
-            for row in range(board.size.height):
-                # 检查当前单元格是否为空
-                if board.squares[row][col] is None:
-                    # 计算空穴深度
-                    depth = self.__get_hole_depth(Position(col, row))
-                    if depth > 0:
-                        depths.append(depth)
-                        rows_with_holes.add(row)
+        holes_count = 0
+        total_hole_depth = 0
+        rows_with_holes_set = set()
 
-        self.hole_depth = sum(depths)
-        self.rows_with_holes = len(rows_with_holes)
-        self.holes = len(depths)
+        for col in range(width):
+            block_encountered = False # Flag: Have we seen a block above in this column?
+            current_depth_contribution = 0 # Number of blocks encountered above the current position in this column
+
+            # Iterate top-down (from highest possible row index down to 0)
+            for row in range(board_height - 1, -1, -1):
+                if squares[row][col] is not None:
+                    # Found a block
+                    block_encountered = True
+                    # Increment depth contribution for cells below this one
+                    current_depth_contribution += 1
+                elif block_encountered:
+                    # Empty cell below at least one block: This is a hole.
+                    holes_count += 1
+                    rows_with_holes_set.add(row)
+                    # The depth of this specific hole is the number of blocks
+                    # encountered strictly *above* it so far in this column scan.
+                    total_hole_depth += current_depth_contribution
+                # else: Empty cell above any blocks - not a hole, do nothing.
+
+        self.holes = holes_count
+        self.hole_depth = total_hole_depth
+        self.rows_with_holes = len(rows_with_holes_set)
         return self.holes
 
     def _get_board_wells(self) -> int:
@@ -697,7 +711,7 @@ def find_best_action(game: Game, actions: list[BlockStatus], weights: list[float
     # visualize.visualize_dbt_feature(best_features) # type: ignore
     return best_action
 
-def run_game(ctx: Context, manual: bool = False) -> None:
+def run_game(ctx: Context, manual: bool = False, show_board: bool = False) -> None:
     """
     运行游戏（自动进行）
     暂时为考虑一个方块的版本
@@ -711,8 +725,11 @@ def run_game(ctx: Context, manual: bool = False) -> None:
     start_time = datetime.now()
     
     while ctx.game.score >= 0:
-        if cnt % 100 == 0:
-            print(f"({(datetime.now() - start_time).total_seconds():.3f}s) 第 {cnt} 次操作：")
+        single_start_time = datetime.now()
+        if show_board or cnt % 100 == 0:
+            if show_board:
+                time.sleep(0.2)
+            print(f"({(datetime.now() - single_start_time).total_seconds():.3f}s / {(datetime.now() - start_time).total_seconds():.3f}s) 第 {cnt} 次操作：")
         
         # 获取当前游戏状态
         game = ctx.game
@@ -727,8 +744,8 @@ def run_game(ctx: Context, manual: bool = False) -> None:
         # 找到最佳的动作
         best_action = find_best_action(game, actions, ctx.strategy.assessment_model.weights)
         
-        if cnt % 100 == 0:
-            visualize.visualize_game(game, best_action, _find_y_offset(game.board, best_action)) # type: ignore
+        if show_board or cnt % 100 == 0:
+            visualize.visualize_game(game, best_action, _find_y_offset(game.board, best_action), show_board) # type: ignore
         # visualize.visualize_dbt_feature()
         if manual:
             # 手动模式，等待用户输入
@@ -742,7 +759,7 @@ def run_game(ctx: Context, manual: bool = False) -> None:
         
         cnt += 1
         
-        if cnt >= 1000:
+        if cnt >= 3000:
             exit(0)
 
 
@@ -752,4 +769,4 @@ if __name__ == "__main__":
         game=create_new_game(), strategy=Strategy(assessment_model=my_assessment_model)
     )
     ic("游戏开始")
-    run_game(ctx, manual=False)
+    run_game(ctx, manual=False, show_board=False)
