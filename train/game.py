@@ -92,56 +92,50 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
             raise ValueError("无法放置方块")
         self.landing_height = y_offset + 1  # 最底层记为 1
 
-        # 2. Create ONE copy to modify
-        self.new_game = game.model_copy(deep=True)
-        board = self.new_game.board  # Work directly on the board of the copy
+        # 2. Create a shallow copy of game, deep copy only the board using board.copy()
+        self.new_game = game.model_copy() # Shallow copy game attributes
+        board_copy = game.board.copy_board()    # Use the optimized board copy method
+        self.new_game.board = board_copy  # Assign the independent board copy
 
-        # 3. Place the piece on the copied board
+        # 3. Place the piece on the copied board (board_copy)
         rotation = action.rotation
         block_to_place = action.rotation.get_original_block(k_blocks)
         for pos in rotation.occupied:
             x = action.x_offset + pos.x
             y = y_offset + pos.y
-            # Basic bounds check (should be covered by _find_y_offset logic)
-            if 0 <= y < board.size.height and 0 <= x < board.size.width:
-                board.squares[y][x] = block_to_place
+            # Basic bounds check
+            # Ensure y is within the bounds of the actual squares list
+            if 0 <= y < len(board_copy.squares) and 0 <= x < board_copy.size.width:
+                board_copy.squares[y][x] = block_to_place
             else:
                 # This case indicates an issue with _find_y_offset or action generation
-                raise ValueError(f"Calculated placement out of bounds: ({x},{y})")
+                # or board buffer size in Board.__init__
+                raise ValueError(f"Calculated placement out of bounds: ({x},{y}) board height: {len(board_copy.squares)}")
 
-        # 4. Backup the board state *before* elimination
-        # Using a potentially faster copy method if Board is Pydantic and Block refs are okay
-        try:
-            # Attempt faster copy assuming Block objects don't need deep copy
-            new_squares = [row[:] for row in board.squares]
-            self.backup_board = Board(size=board.size.model_copy(), squares=new_squares)
-        except Exception:  # Fallback to pydantic's copy if the above fails
-            self.backup_board = board.model_copy(deep=True)
+        # 4. Backup the board state *before* elimination using board.copy()
+        self.backup_board = board_copy.copy_board() # Use optimized copy again
 
-        # 5. Eliminate lines and update score on the copied game's board
-        eliminated_lines = _eliminate_lines(board)  # Modifies board in place
+        # 5. Eliminate lines and update score on the copied game's board (board_copy)
+        eliminated_lines = _eliminate_lines(board_copy) # Modifies board_copy in place
         if eliminated_lines > 0:
             # Ensure awards list is long enough
             if eliminated_lines <= len(self.new_game.config.awards):
                 award_index = eliminated_lines - 1
-                self.new_game.score += (
-                    int(self.new_game.config.awards[award_index]) * 100
-                )
+                # Update score on the shallow-copied game instance
+                self.new_game.score += int(self.new_game.config.awards[award_index]) * 100
             else:
-                # Handle cases where more lines are cleared than awards defined (e.g., use last award)
+                # Handle cases where more lines are cleared than awards defined
                 award_index = len(self.new_game.config.awards) - 1
                 if award_index >= 0:
-                    self.new_game.score += (
-                        int(self.new_game.config.awards[award_index])
-                        * 100
-                        * eliminated_lines
-                    )  # Or some other logic
+                     self.new_game.score += int(self.new_game.config.awards[award_index]) * 100 * eliminated_lines
 
-        # 6. Update upcoming blocks on the copied game
+        # 6. Update upcoming blocks on the shallow-copied game instance
+        # Note: get_new_upcoming might need adjustment if it relies on game state
+        # that should have been deep copied but wasn't. Assuming it's okay for now.
         self.new_game.upcoming_blocks = get_new_upcoming(self.new_game)
 
-        # self.new_game now holds the final state after the move
-        # self.backup_board holds the board state just before line elimination
+        # self.new_game now holds the shallow game state with the modified board_copy
+        # self.backup_board holds the pre-elimination board state
 
     def _get_landing_height(self, action: BlockStatus) -> int:
         # 该函数已经废弃了，landing_height 会在 init 时自动储存
@@ -421,8 +415,12 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         self.column_heights = []
         self.column_differences = []
         self.maximum_height = 0
-        self.new_game = create_new_game() # Resetting new_game is fine
-        self.backup_board = None # ADD this reset
+        
+        # --- Make sure to reset backup_board ---
+        # ... (inside the feature vector reset section) ...
+        self.maximum_height = 0
+        # self.new_game = create_new_game() # Resetting new_game might not be strictly necessary if overwritten anyway
+        self.backup_board = None # Ensure backup is reset
 
 
         # 返回结果

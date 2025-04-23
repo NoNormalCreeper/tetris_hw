@@ -173,9 +173,13 @@ class Board(BaseModel):
     
     def __init__(self, size: Size, **kwargs):
         # 初始化棋盘 - 先创建squares，再传入super().__init__
+        # Ensure squares list has enough rows for potential overflow during placement/init
+        # The height calculation might need adjustment based on max block height + buffer
+        buffer_height = 5 # Example buffer
+        total_height = size.height + buffer_height
         squares = [
             [None for _ in range(size.width)]
-            for _ in range(size.height + 5) # 防止超出死亡判定线的越界情况
+            for _ in range(total_height)
         ]
         super().__init__(size=size, squares=squares, **kwargs)
     
@@ -185,7 +189,20 @@ class Board(BaseModel):
         :param y: 行号
         :return: 是否可以消除
         """
-        return all(self.squares[y][x] is not None for x in range(self.size.width))
+        if 0 <= y < len(self.squares): # Bounds check
+            return all(self.squares[y][x] is not None for x in range(self.size.width))
+        return False
+    
+    def copy_board(self) -> "Board":
+        """Creates a copy of the board with a copied squares list."""
+        # Create a new Board instance using the existing size.
+        # This correctly initializes the squares list dimensions via __init__.
+        new_board = Board(size=self.size.model_copy()) # Copy size
+
+        # Manually copy the state of the squares.
+        # This is often faster than deepcopy for list of lists if item refs are okay.
+        new_board.squares = [row[:] for row in self.squares]
+        return new_board
 
 
 class Game(BaseModel):
