@@ -69,13 +69,14 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
     column_heights: list[int] = []  # 每列高度，长度为 width
     column_differences: list[int] = []  # 每列高度差绝对值，长度为 width-1
     maximum_height: int = 0  # 棋盘上最高的方块高度
-    
+
     # 论文作者引入的新的两个特征值
     hole_depth: int = 0
     rows_with_holes: int = 0
-    
+
     new_game: Game = create_new_game()  # 新的游戏对象
-    backup_game: Game = create_new_game()   # 备份的原有游戏对象，用于计算满行
+    # backup_game: Game = create_new_game()
+    backup_board: Optional[Board] = None # ADD this attribute to store board state before elimination
 
     def _init_new_game(self, game: Game, action: BlockStatus) -> None:
         """
@@ -85,21 +86,63 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         :param action: 执行的操作
         :return: None
         """
-        self.new_game = game.model_copy(deep=True)
-        self.backup_game = game.model_copy(deep=True)
-        y_offset = _find_y_offset(self.new_game.board, action)
-        
+        # 1. Find landing position based on the original board (read-only)
+        y_offset = _find_y_offset(game.board, action)
         if y_offset == -1:
             raise ValueError("无法放置方块")
-        
-        # 计算所有方块单元中的最低位置
-        # min_y = y_offset + min([pos.y for pos in action.rotation.occupied])
-        min_y = y_offset
-        
-        self.landing_height = min_y + 1  # 最底层记为 1
-        self.new_game, _ = execute_action(self.new_game, action)
-        self.backup_game, _ = execute_action(self.backup_game, action, eliminate=False)
-        
+        self.landing_height = y_offset + 1  # 最底层记为 1
+
+        # 2. Create ONE copy to modify
+        self.new_game = game.model_copy(deep=True)
+        board = self.new_game.board  # Work directly on the board of the copy
+
+        # 3. Place the piece on the copied board
+        rotation = action.rotation
+        block_to_place = action.rotation.get_original_block(k_blocks)
+        for pos in rotation.occupied:
+            x = action.x_offset + pos.x
+            y = y_offset + pos.y
+            # Basic bounds check (should be covered by _find_y_offset logic)
+            if 0 <= y < board.size.height and 0 <= x < board.size.width:
+                board.squares[y][x] = block_to_place
+            else:
+                # This case indicates an issue with _find_y_offset or action generation
+                raise ValueError(f"Calculated placement out of bounds: ({x},{y})")
+
+        # 4. Backup the board state *before* elimination
+        # Using a potentially faster copy method if Board is Pydantic and Block refs are okay
+        try:
+            # Attempt faster copy assuming Block objects don't need deep copy
+            new_squares = [row[:] for row in board.squares]
+            self.backup_board = Board(size=board.size.model_copy(), squares=new_squares)
+        except Exception:  # Fallback to pydantic's copy if the above fails
+            self.backup_board = board.model_copy(deep=True)
+
+        # 5. Eliminate lines and update score on the copied game's board
+        eliminated_lines = _eliminate_lines(board)  # Modifies board in place
+        if eliminated_lines > 0:
+            # Ensure awards list is long enough
+            if eliminated_lines <= len(self.new_game.config.awards):
+                award_index = eliminated_lines - 1
+                self.new_game.score += (
+                    int(self.new_game.config.awards[award_index]) * 100
+                )
+            else:
+                # Handle cases where more lines are cleared than awards defined (e.g., use last award)
+                award_index = len(self.new_game.config.awards) - 1
+                if award_index >= 0:
+                    self.new_game.score += (
+                        int(self.new_game.config.awards[award_index])
+                        * 100
+                        * eliminated_lines
+                    )  # Or some other logic
+
+        # 6. Update upcoming blocks on the copied game
+        self.new_game.upcoming_blocks = get_new_upcoming(self.new_game)
+
+        # self.new_game now holds the final state after the move
+        # self.backup_board holds the board state just before line elimination
+
     def _get_landing_height(self, action: BlockStatus) -> int:
         # 该函数已经废弃了，landing_height 会在 init 时自动储存
         # self.landing_height = _find_y_offset(self.new_game.board, action)
@@ -113,9 +156,13 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         :param action: 方块状态
         :return: 被侵蚀的方块数量
         """
-        full_lines = get_full_lines(self.backup_game.board)
+        if self.backup_board is None:
+            raise RuntimeError("_init_new_game must be called before _get_eroded_piece_cells")
 
-        # 计算贡献的行数
+        # Use the backup board (state before elimination) to find full lines
+        full_lines = get_full_lines(self.backup_board)
+
+        # Calculation logic remains the same, using self.landing_height and action
         y_offset = self.landing_height - 1
         block_height = action.rotation.size.height
         contributed_to_lines = list(
@@ -125,16 +172,13 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
             )
         )
 
-        # 计算总贡献单元格数
         eliminate_bricks = 0
         for cell in action.rotation.occupied:
-            # 计算该单元格在消除行中的贡献
             for line_y in contributed_to_lines:
                 if cell.y + y_offset == line_y:
                     eliminate_bricks += 1
 
         self.eroded_piece_cells = len(contributed_to_lines) * eliminate_bricks
-
         return self.eroded_piece_cells
 
     def _get_row_transitions(self) -> int:
@@ -145,7 +189,7 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         """
         board = self.new_game.board
         transitions = 0
-        
+
         for row in range(board.size.height):
             for index, block in enumerate(
                 board.squares[row][0 : board.size.width - 1]
@@ -153,10 +197,10 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
                 # 检查每个方块与右边的方块是否存在转换
                 if (block is None) != (board.squares[row][index + 1] is None):
                     transitions += 1
-        
+
         self.row_transitions = transitions
         return self.row_transitions
-    
+
     def _get_column_transitions(self) -> int:
         """
         计算列转换数
@@ -165,7 +209,7 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         """
         board = self.new_game.board
         transitions = 0
-        
+
         for col in range(board.size.width):
             for row in range(board.size.height - 1):  # 只检查到倒数第二行
                 # 检查每个方块与下边的方块是否存在转换
@@ -173,10 +217,10 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
                     board.squares[row + 1][col] is None
                 ):
                     transitions += 1
-                    
+
         self.column_transitions = transitions
         return self.column_transitions
-    
+
     def __get_hole_depth(self, hole: Position) -> int:
         """
         计算一个空穴的深度（空穴上方被占用的方块数）
@@ -186,16 +230,16 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         """
         board = self.new_game.board
         depth = 0
-        
+
         # 从空穴位置向上检查
         for row in range(hole.y + 1, board.size.height):
             if board.squares[row][hole.x] is not None:
                 # 找到一个被占据的方块，深度加1
                 depth += 1
             # 不再有提前返回，会检查所有上方格子
-        
+
         return depth
-    
+
     def _get_holes(self) -> int:
         """
         计算空穴数。
@@ -207,7 +251,7 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         # holes = 0
         depths = []
         rows_with_holes = set()
-        
+
         for col in range(board.size.width):
             # 从底部开始检查每一行
             for row in range(board.size.height):
@@ -218,12 +262,12 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
                     if depth > 0:
                         depths.append(depth)
                         rows_with_holes.add(row)
-        
+
         self.hole_depth = sum(depths)
         self.rows_with_holes = len(rows_with_holes)
         self.holes = len(depths)
         return self.holes
-    
+
     def _get_board_wells(self) -> int:
         """
         计算棋盘井数
@@ -232,20 +276,20 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         """
         board = self.new_game.board
         depths = []
-        
+
         wells_sum = 0
 
         # 遍历所有列
         for col in range(board.size.width):
             current_well_depth = 0
-            
+
             # 从上到下检查每个单元格
             for row in range(board.size.height):
                 # 检查当前单元格是否为空
                 if board.squares[row][col] is None:
                     # 检查是否是井
                     is_well = False
-                    
+
                     # 中间列：左右邻居必须都被占据
                     if 0 < col < board.size.width - 1:
                         is_well = (board.squares[row][col-1] is not None) and (board.squares[row][col+1] is not None)
@@ -255,7 +299,7 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
                     # 最右列：左邻居必须被占据
                     else:  # col == board.size.width - 1
                         is_well = board.squares[row][col-1] is not None
-                    
+
                     if is_well:
                         # 这是井的一部分
                         current_well_depth += 1
@@ -269,14 +313,14 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
                     if current_well_depth > 0:
                         wells_sum += (current_well_depth * (current_well_depth + 1)) // 2
                         current_well_depth = 0
-            
+
             # 处理列底部可能剩余的井
             if current_well_depth > 0:
                 wells_sum += (current_well_depth * (current_well_depth + 1)) // 2
 
         self.board_wells = wells_sum
         return self.board_wells
-    
+
     def _get_column_heights(self) -> list[int]:
         """
         计算每列的高度
@@ -285,10 +329,10 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         """
         board = self.new_game.board
         heights = []
-        
+
         for col in range(board.size.width):
             height = 0
-            
+
             # 从顶部到底部检查每个单元格
             for row in range(board.size.height):
                 # 检查当前单元格是否被占据
@@ -296,10 +340,10 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
                     height = board.size.height - row
                     break
             heights.append(height)
-        
+
         self.column_heights = heights
         return self.column_heights
-    
+
     def _get_column_differences(self) -> list[int]:
         """
         计算每列的高度差绝对值
@@ -309,13 +353,13 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         """
         heights = self.column_heights
         differences = []
-        
+
         for i in range(len(heights) - 1):
             differences.append(abs(heights[i] - heights[i + 1]))
-        
+
         self.column_differences = differences
         return self.column_differences
-    
+
     def _get_maximum_height(self) -> int:
         """
         计算棋盘上最高的方块高度
@@ -339,7 +383,7 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         except ValueError:
             # 代表该状态无法进行游戏（死亡或越界），继续向上抛错误来处理，代表不应该执行该操作
             raise ValueError("游戏结束或越界")
-        
+
         # self._get_landing_height(action)
         self._get_eroded_piece_cells(action)
         self._get_row_transitions()
@@ -349,7 +393,7 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         self._get_column_heights()
         self._get_column_differences()
         self._get_maximum_height()
-        
+
         # 特征向量
         feature_vector = [  # 28 维
             self.landing_height,
@@ -364,7 +408,7 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
             *self.column_differences,
             self.maximum_height,
         ]
-        
+
         # 清除所有数据便于下次使用
         self.landing_height = 0
         self.eroded_piece_cells = 0
@@ -377,8 +421,10 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         self.column_heights = []
         self.column_differences = []
         self.maximum_height = 0
-        self.new_game = create_new_game()
-        
+        self.new_game = create_new_game() # Resetting new_game is fine
+        self.backup_board = None # ADD this reset
+
+
         # 返回结果
         return feature_vector
 
@@ -553,7 +599,6 @@ def _eliminate_lines(board: Board) -> int:
         board.squares[i] = [None] * board.size.width
         
     return num_full_lines
-    
 
 
 def execute_action(game: Game, action: BlockStatus, eliminate=True) -> tuple[Game, int]:
@@ -620,7 +665,6 @@ def all_actions(block: Block) -> list[BlockStatus]:
         for x_offset in range(0, 10 - rotation.size.width + 1):
             actions.append(BlockStatus(x_offset=x_offset, rotation=rotation, assessment_score=None))
     return actions
-
 
 
 def find_best_action(game: Game, actions: list[BlockStatus], weights: list[float]) -> BlockStatus:
@@ -699,7 +743,9 @@ def run_game(ctx: Context, manual: bool = False) -> None:
         ctx.game = game
         
         cnt += 1
-    
+        
+        if cnt >= 1000:
+            exit(0)
 
 
 if __name__ == "__main__":
