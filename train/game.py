@@ -624,6 +624,8 @@ def find_best_action(game: Game, actions: list[BlockStatus], weights: list[float
     
     best_action = actions[0]
     best_score = float("-inf")
+    features = []
+    best_features = []
 
     for action in actions:
         # Convert the feature list to the expected type
@@ -637,11 +639,12 @@ def find_best_action(game: Game, actions: list[BlockStatus], weights: list[float
         if action.assessment_score > best_score:
             best_action = action
             best_score = action.assessment_score
+            best_features = features
     
-    visualize.visualize_dbt_feature(features) # type: ignore
+    # visualize.visualize_dbt_feature(best_features) # type: ignore
     return best_action
 
-def run_game(ctx: Context) -> None:
+def run_game(ctx: Context, manual: bool = False) -> None:
     """
     运行游戏（自动进行）
     暂时为考虑一个方块的版本
@@ -651,7 +654,13 @@ def run_game(ctx: Context) -> None:
     """
     # 初始化游戏
     
+    cnt = 0
+    start_time = datetime.now()
+    
     while ctx.game.score >= 0:
+        if cnt % 100 == 0:
+            print(f"({(datetime.now() - start_time).total_seconds():.3f}s) 第 {cnt} 次操作：")
+        
         # 获取当前游戏状态
         game = ctx.game
         board = game.board
@@ -665,15 +674,20 @@ def run_game(ctx: Context) -> None:
         # 找到最佳的动作
         best_action = find_best_action(game, actions, ctx.strategy.assessment_model.weights)
         
-        visualize.visualize_game(game, best_action)
+        if cnt % 100 == 0:
+            visualize.visualize_game(game, best_action, _find_y_offset(game.board, best_action)) # type: ignore
         # visualize.visualize_dbt_feature()
-        input("Press Enter to continue...")  # 暂时使用输入来控制游戏进行
+        if manual:
+            # 手动模式，等待用户输入
+            input("按下 Enter 键继续...")
         
         # 执行最佳动作
-        game = execute_action(game, best_action)
+        game, _ = execute_action(game, best_action)
         
         # 更新游戏状态
         ctx.game = game
+        
+        cnt += 1
     
 
 
@@ -682,5 +696,5 @@ if __name__ == "__main__":
     ctx = Context(
         game=create_new_game(), strategy=Strategy(assessment_model=my_assessment_model)
     )
-    print("游戏开始")
-    run_game(ctx)
+    ic("游戏开始")
+    run_game(ctx, manual=False)
