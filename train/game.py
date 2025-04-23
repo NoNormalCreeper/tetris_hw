@@ -11,6 +11,8 @@ from models import (
     FeatureExtractor,
     Strategy,
 )
+from dbt import DbtFeatureExtractor
+import visualize
 
 from constants import k_blocks
 
@@ -45,7 +47,7 @@ def calculate_linear_function(params: list[float | int], vector: list[float | in
     return sum(p * v for p, v in zip(params, vector))
 
 
-class DbtFeatureExtractor(FeatureExtractor):
+class MyDbtFeatureExtractor(DbtFeatureExtractor):
     """
     DBT 特征提取器
     """
@@ -127,13 +129,13 @@ class DbtFeatureExtractor(FeatureExtractor):
         
         for row in range(board.size.height):
             for index, block in enumerate(
-                board.squares[row][0 : board.size.width]
+                board.squares[row][0 : board.size.width - 1]
             ):  # 只检查到倒数第二列
                 # 检查每个方块与右边的方块是否存在转换
                 if (block is None) != (board.squares[row][index + 1] is None):
                     transitions += 1
         
-        self.row_transitions = len(get_full_lines(board)) * transitions
+        self.row_transitions = transitions
         return self.row_transitions
     
     def _get_column_transitions(self) -> int:
@@ -153,12 +155,12 @@ class DbtFeatureExtractor(FeatureExtractor):
                 ):
                     transitions += 1
                     
-        self.column_transitions = len(get_full_lines(board)) * transitions
+        self.column_transitions = transitions
         return self.column_transitions
     
     def __get_hole_depth(self, hole: Position) -> int:
         """
-        计算一个空穴的深度
+        计算一个空穴的深度（空穴上方被占用的方块数）
 
         :param hole: 空穴位置
         :return: 空穴深度
@@ -169,9 +171,11 @@ class DbtFeatureExtractor(FeatureExtractor):
         # 从空穴位置向上检查
         for row in range(hole.y + 1, board.size.height):
             if board.squares[row][hole.x] is not None:
+                # 找到一个被占据的方块，深度加1
                 depth += 1
-            else:
-                return depth
+            # 不再有提前返回，会检查所有上方格子
+        
+        return depth
     
     def _get_holes(self) -> int:
         """
@@ -192,8 +196,9 @@ class DbtFeatureExtractor(FeatureExtractor):
                 if board.squares[row][col] is None:
                     # 计算空穴深度
                     depth = self.__get_hole_depth(Position(col, row))
-                    depths.append(depth)
-                    rows_with_holes.add(row)
+                    if depth > 0:
+                        depths.append(depth)
+                        rows_with_holes.add(row)
         
         self.hole_depth = sum(depths)
         self.rows_with_holes = len(rows_with_holes)
@@ -363,7 +368,7 @@ my_assessment_model = AssessmentModel(
     length=28,  # 特征向量长度
     # weights=[0.0] * 28,  # 权重初始化为 0
     weights=[-12.63, 6.60, -9.22, -19.77, -13.08, -10.49, -1.61, -24.04] + [0.0] * 20,
-    feature_extractor=DbtFeatureExtractor(),  # 特征提取器实例化
+    feature_extractor=MyDbtFeatureExtractor(),  # 特征提取器实例化
 )
 
 
@@ -381,8 +386,8 @@ def get_new_upcoming(game: Game) -> list[Block]:
         block2 = random.choice(game.config.available_blocks)
     else:
         # 如果游戏已经开始，使用当前的即将出现的方块
-        block1 = game.upcoming_blocks[0]
-        block2 = game.upcoming_blocks[1]
+        block1 = game.upcoming_blocks[1]
+        block2 = random.choice(game.config.available_blocks)
     return [block1, block2]
 
 
@@ -516,6 +521,7 @@ def execute_action(game: Game, action: BlockStatus) -> Game:
         # 游戏结束
         # 只要这里超出了死亡线，再怎么消除都没用，所以可以直接就在这结束了
         new_game.set_end()
+        raise ValueError("游戏结束")
         return new_game
     
     # 填充棋盘
@@ -537,15 +543,84 @@ def execute_action(game: Game, action: BlockStatus) -> Game:
     return new_game
 
 
+def all_actions(block: Block) -> list[BlockStatus]:
+    """
+    获取所有可能的动作
+
+    :param block: 下一个方块
+    :return: 所有可能的动作列表
+    """
+    actions = []
+    for rotation in block.rotations:
+        for x_offset in range(0, 10 - rotation.size.width + 1):
+            actions.append(BlockStatus(x_offset=x_offset, rotation=rotation, assessment_score=None))
+    return actions
+
+
+
+def find_best_action(game: Game, actions: list[BlockStatus], weights: list[float]) -> BlockStatus:
+    """
+    找到最佳的操作策略
+
+    :param game: 游戏对象
+    :param actions: 所有可能的动作列表
+    :return: 最佳的操作策略
+    """
+    feature_extractor = MyDbtFeatureExtractor()
+    
+    best_action = actions[0]
+    best_score = float("-inf")
+
+    for action in actions:
+        # Convert the feature list to the expected type
+        try:
+            features = [float(x) for x in feature_extractor.extract_features(game, action)]
+            action.assessment_score = calculate_linear_function(weights, features)
+        except ValueError:
+            # 代表该状态无法进行游戏
+            action.assessment_score = float("-inf")
+    
+        if action.assessment_score > best_score:
+            best_action = action
+            best_score = action.assessment_score
+    
+    visualize.visualize_dbt_feature(features) # type: ignore
+    return best_action
 
 def run_game(ctx: Context) -> None:
     """
-    运行游戏
+    运行游戏（自动进行）
+    暂时为考虑一个方块的版本
 
     :param ctx: 传入一个刚初始化的上下文对象
     :return: None
     """
     # 初始化游戏
+    
+    while ctx.game.score >= 0:
+        # 获取当前游戏状态
+        game = ctx.game
+        board = game.board
+
+        # 获取下一个方块
+        game.upcoming_blocks = get_new_upcoming(game)
+        
+        # 获取所有可能的动作
+        actions = all_actions(game.upcoming_blocks[0])
+
+        # 找到最佳的动作
+        best_action = find_best_action(game, actions, ctx.strategy.assessment_model.weights)
+        
+        visualize.visualize_game(game, best_action)
+        # visualize.visualize_dbt_feature()
+        input("Press Enter to continue...")  # 暂时使用输入来控制游戏进行
+        
+        # 执行最佳动作
+        game = execute_action(game, best_action)
+        
+        # 更新游戏状态
+        ctx.game = game
+    
 
 
 if __name__ == "__main__":
@@ -553,4 +628,5 @@ if __name__ == "__main__":
     ctx = Context(
         game=create_new_game(), strategy=Strategy(assessment_model=my_assessment_model)
     )
+    print("游戏开始")
     run_game(ctx)
