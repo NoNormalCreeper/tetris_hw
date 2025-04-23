@@ -1,3 +1,6 @@
+from datetime import datetime
+from icecream import ic
+from typing import Optional
 from models import (
     AssessmentModel,
     BlockStatus,
@@ -17,6 +20,8 @@ import visualize
 from constants import k_blocks
 
 import random
+
+ic = lambda x: None
 
 
 def create_new_game() -> Game:
@@ -429,6 +434,12 @@ def _is_collision(board: Board, action: BlockStatus, y_offset: int) -> bool:
             return True
         if board.squares[y][x] is not None:
             return True
+        
+        # 判断方块上方是否有其他方块
+        for y2 in range(y + 1, board.size.height):
+            if board.squares[y2][x] is not None:
+                # 如果上方有方块，说明发生碰撞
+                return True
 
     return False
 
@@ -448,7 +459,7 @@ def _find_y_offset(board: Board, action: BlockStatus) -> int:
     """
     找到放下该方块后，y 坐标的值
     
-    :param board: 棋盘对象
+    :param board: 未经操作的棋盘对象
     :param action: 方块状态
     :return: y 坐标；若因此游戏结束，则返回 -1
     """
