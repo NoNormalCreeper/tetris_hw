@@ -96,7 +96,8 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         self.backup_game, _ = execute_action(self.backup_game, action, eliminate=False)
         
     def _get_landing_height(self, action: BlockStatus) -> int:
-        self.landing_height = _find_y_offset(self.new_game.board, action)
+        # 该函数已经废弃了，landing_height 会在 init 时自动储存
+        # self.landing_height = _find_y_offset(self.new_game.board, action)
         return self.landing_height
 
     def _get_eroded_piece_cells(self, action: BlockStatus) -> int:
@@ -107,14 +108,14 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         :param action: 方块状态
         :return: 被侵蚀的方块数量
         """
-        full_lines = get_full_lines(self.new_game.board)
+        full_lines = get_full_lines(self.backup_game.board)
 
-        # 计算贡献单元格：在刚才放置的那个方块本身包含的单元格中，有多少个是位于被消除掉的那些行里的
+        # 计算贡献的行数
+        y_offset = self.landing_height - 1
+        block_height = action.rotation.size.height
         contributed_to_lines = list(
             filter(
-                lambda line_y: self.landing_height
-                <= line_y
-                < self.landing_height + action.rotation.size.height,
+                lambda line_y: y_offset <= line_y < y_offset + block_height,
                 full_lines,
             )
         )
@@ -124,7 +125,7 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         for cell in action.rotation.occupied:
             # 计算该单元格在消除行中的贡献
             for line_y in contributed_to_lines:
-                if cell.y + self.landing_height == line_y:
+                if cell.y + y_offset == line_y:
                     eliminate_bricks += 1
 
         self.eroded_piece_cells = len(contributed_to_lines) * eliminate_bricks
@@ -334,7 +335,7 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
             # 代表该状态无法进行游戏（死亡或越界），继续向上抛错误来处理，代表不应该执行该操作
             raise ValueError("游戏结束或越界")
         
-        self._get_landing_height(action)
+        # self._get_landing_height(action)
         self._get_eroded_piece_cells(action)
         self._get_row_transitions()
         self._get_column_transitions()
