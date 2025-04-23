@@ -1,6 +1,9 @@
 from constants import *
 from models import Board, Game, FeatureExtractor
 from dbt import DbtFeatureExtractor
+from icecream import ic
+
+# ic = lambda x: None
 
 
 def cyan(text: str) -> str:
@@ -10,6 +13,22 @@ def cyan(text: str) -> str:
     :param text: 要变为青色的文本
     """
     return f"\033[96m{text}\033[0m"
+
+def green(text: str) -> str:
+    """
+    将文本变为绿色
+    
+    :param text: 要变为绿色的文本
+    """
+    return f"\033[92m{text}\033[0m"
+
+def yellow(text: str) -> str:
+    """
+    将文本变为黄色
+    
+    :param text: 要变为黄色的文本
+    """
+    return f"\033[93m{text}\033[0m"
 
 def visualize_occupied(occupied: list[Position], size: Size) -> None:
     """
@@ -60,7 +79,7 @@ def visualize_blocks(blocks: list[Block]) -> None:
         print("\n")
         
 
-def visualize_board(board: Board) -> None:
+def visualize_board(board: Board, action: BlockStatus, y_offset: int) -> None:
     """
     可视化棋盘
     
@@ -70,17 +89,31 @@ def visualize_board(board: Board) -> None:
     # 棋盘边界
     horizontal_border = cyan("+" + "-" * (board.size.width * 2 - 1) + "+")
     
+    occupied_grid = [Position(action.x_offset + pos.x, y_offset + pos.y) for pos in action.rotation.occupied]
+    
+    def occupied(x: int, y: int) -> bool:
+        for pos in occupied_grid:
+            if pos.x == x and pos.y == y:
+                return True
+        return False
+    
     # 显示棋盘（从上到下）
     print(horizontal_border)
     for y in range(board.size.height - 1, -1, -1):  # 从上到下显示
         row = []
         for x in range(board.size.width):
-            cell = board.squares[y][x]
-            if cell is None:
-                row.append(" ")  # 空格子
+            if occupied(x, y):
+                row.append(green("X"))
+            elif board.squares[y][x] is not None:
+                row.append(board.squares[y][x].label) # type: ignore
             else:
-                row.append(cell.label)  # 使用方块的标签
-        print(cyan("| ") + " ".join(row) + cyan(" |"))
+                row.append(" ")
+        
+        # 如果能消除，则显示为黄色
+        if board.can_clear_line(y):
+            row = [yellow(cell) for cell in row]
+        
+        print(cyan("|") + " " + " ".join(row) + " " + cyan("|"))
     print(horizontal_border)
     
     # 显示底部坐标
@@ -97,9 +130,9 @@ def visualize_action(game: Game, action: BlockStatus) -> None:
     print(f"当前分数: {game.score}")
     print(f"当前方块: {game.upcoming_blocks[0].label}")
     print(f"最佳操作: degree={action.rotation.label}, x={action.x_offset}, score={action.assessment_score}")
-    visualize_occupied(action.rotation.occupied, action.rotation.size)
+    # visualize_occupied(action.rotation.occupied, action.rotation.size)
 
-def visualize_game(game: Game, action: BlockStatus) -> None:
+def visualize_game(game: Game, action: BlockStatus, y_offset: int, show_board: bool=False) -> None:
     """
     可视化游戏操作
     
@@ -109,11 +142,11 @@ def visualize_game(game: Game, action: BlockStatus) -> None:
     """
     print("当前操作:")
     visualize_action(game, action)
-    print("棋盘状态:")
-    visualize_board(game.board)
-    print("即将出现的方块:")
-    for block in game.upcoming_blocks:
-        print(f"  {block.label}")
+    if show_board:
+        print("棋盘状态:")
+        visualize_board(game.board, action, y_offset)
+        for block in game.upcoming_blocks:
+            print(f"  {block.label}")
     print("-" * 20)
 
 def visualize_dbt_feature(features: list[int]):
