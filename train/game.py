@@ -70,6 +70,7 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
     rows_with_holes: int = 0
     
     new_game: Game = create_new_game()  # 新的游戏对象
+    backup_game: Game = create_new_game()   # 备份的原有游戏对象，用于计算满行
 
     def _init_new_game(self, game: Game, action: BlockStatus) -> None:
         """
@@ -80,7 +81,19 @@ class MyDbtFeatureExtractor(DbtFeatureExtractor):
         :return: None
         """
         self.new_game = game.model_copy(deep=True)
-        self.new_game = execute_action(self.new_game, action)
+        self.backup_game = game.model_copy(deep=True)
+        y_offset = _find_y_offset(self.new_game.board, action)
+        
+        if y_offset == -1:
+            raise ValueError("无法放置方块")
+        
+        # 计算所有方块单元中的最低位置
+        # min_y = y_offset + min([pos.y for pos in action.rotation.occupied])
+        min_y = y_offset
+        
+        self.landing_height = min_y + 1  # 最底层记为 1
+        self.new_game, _ = execute_action(self.new_game, action)
+        self.backup_game, _ = execute_action(self.backup_game, action, eliminate=False)
         
     def _get_landing_height(self, action: BlockStatus) -> int:
         self.landing_height = _find_y_offset(self.new_game.board, action)
