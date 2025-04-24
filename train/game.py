@@ -679,7 +679,7 @@ def all_actions(block: Block) -> list[BlockStatus]:
     return actions
 
 
-def find_best_action(game: Game, actions: list[BlockStatus], weights: list[float]) -> BlockStatus:
+def find_best_action(game: Game, actions: list[BlockStatus], weights: list[float], length: int) -> BlockStatus:
     """
     找到最佳的操作策略
 
@@ -698,7 +698,7 @@ def find_best_action(game: Game, actions: list[BlockStatus], weights: list[float
         # Convert the feature list to the expected type
         try:
             features = [float(x) for x in feature_extractor.extract_features(game, action)]
-            action.assessment_score = calculate_linear_function(weights, features)
+            action.assessment_score = calculate_linear_function(weights[:length], features[:length])
         except ValueError:
             # 代表该状态无法进行游戏
             action.assessment_score = float("-inf")
@@ -711,56 +711,106 @@ def find_best_action(game: Game, actions: list[BlockStatus], weights: list[float
     # visualize.visualize_dbt_feature(best_features) # type: ignore
     return best_action
 
-def run_game(ctx: Context, manual: bool = False, show_board: bool = False) -> None:
+def run_game(ctx: Context, manual: bool = False, show_board: bool = False) -> int:
     """
     运行游戏（自动进行）
     暂时为考虑一个方块的版本
 
     :param ctx: 传入一个刚初始化的上下文对象
-    :return: None
+    :return: 游戏得分
     """
     # 初始化游戏
     
     cnt = 0
     start_time = datetime.now()
     
-    while ctx.game.score >= 0:
-        single_start_time = datetime.now()
-        if show_board or cnt % 100 == 0:
-            if show_board:
-                time.sleep(0.2)
-            print(f"({(datetime.now() - single_start_time).total_seconds():.3f}s / {(datetime.now() - start_time).total_seconds():.3f}s) 第 {cnt} 次操作：")
-        
-        # 获取当前游戏状态
-        game = ctx.game
-        board = game.board
+    try:
+        while ctx.game.score >= 0:
+            single_start_time = datetime.now()
+            if show_board or cnt % 100 == 0:
+                if show_board:
+                    time.sleep(0.2)
+                print(f"({(datetime.now() - single_start_time).total_seconds():.3f}s / {(datetime.now() - start_time).total_seconds():.3f}s) 第 {cnt} 次操作：")
+            
+            # 获取当前游戏状态
+            game = ctx.game
+            board = game.board
 
-        # 获取下一个方块
-        game.upcoming_blocks = get_new_upcoming(game)
-        
-        # 获取所有可能的动作
-        actions = all_actions(game.upcoming_blocks[0])
+            # 获取下一个方块
+            game.upcoming_blocks = get_new_upcoming(game)
+            
+            # 获取所有可能的动作
+            actions = all_actions(game.upcoming_blocks[0])
 
-        # 找到最佳的动作
-        best_action = find_best_action(game, actions, ctx.strategy.assessment_model.weights)
-        
-        if show_board or cnt % 100 == 0:
-            visualize.visualize_game(game, best_action, _find_y_offset(game.board, best_action), show_board) # type: ignore
-        # visualize.visualize_dbt_feature()
-        if manual:
-            # 手动模式，等待用户输入
-            input("按下 Enter 键继续...")
-        
-        # 执行最佳动作
-        game, _ = execute_action(game, best_action)
-        
-        # 更新游戏状态
-        ctx.game = game
-        
-        cnt += 1
-        
-        if cnt >= 3000:
-            exit(0)
+            # 找到最佳的动作
+            best_action = find_best_action(game, actions, ctx.strategy.assessment_model.weights, ctx.strategy.assessment_model.length)
+            
+            if show_board or cnt % 100 == 0:
+                visualize.visualize_game(game, best_action, _find_y_offset(game.board, best_action), show_board) # type: ignore
+            # visualize.visualize_dbt_feature()
+            if manual:
+                # 手动模式，等待用户输入
+                input("按下 Enter 键继续...")
+            
+            # 执行最佳动作
+            game, _ = execute_action(game, best_action)
+            
+            # 更新游戏状态
+            ctx.game = game
+            
+            cnt += 1
+            
+            if cnt >= 3000:
+                exit(0)
+                
+        return abs(ctx.game.score)
+    
+    except Exception as e:
+        return abs(ctx.game.score)
+
+def run_game_for_training(weights: list[float]) -> int:
+    """
+    运行游戏（自动进行）
+    暂时为考虑一个方块的版本
+
+    :param weights: 权重列表
+    :return: 游戏得分
+    """
+    new_assessment_model = AssessmentModel(
+        length=8,  # 特征向量长度
+        weights=weights,
+        feature_extractor=MyDbtFeatureExtractor(),  # 特征提取器实例化
+    )
+    ctx = Context(
+        game=create_new_game(), strategy=Strategy(assessment_model=my_assessment_model)
+    )
+    
+    try:
+        while ctx.game.score >= 0:
+            # 获取当前游戏状态
+            game = ctx.game
+            board = game.board
+
+            # 获取下一个方块
+            game.upcoming_blocks = get_new_upcoming(game)
+            
+            # 获取所有可能的动作
+            actions = all_actions(game.upcoming_blocks[0])
+
+            # 找到最佳的动作
+            best_action = find_best_action(game, actions, ctx.strategy.assessment_model.weights, ctx.strategy.assessment_model.length)
+            
+            # 执行最佳动作
+            game, _ = execute_action(game, best_action)
+            
+            # 更新游戏状态
+            ctx.game = game
+            
+        return abs(ctx.game.score)
+    
+    except Exception as e:
+        return abs(ctx.game.score)
+    
 
 
 if __name__ == "__main__":
