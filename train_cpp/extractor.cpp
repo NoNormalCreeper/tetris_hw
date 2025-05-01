@@ -25,20 +25,22 @@ int MyDbtFeatureExtractorCpp::calculateLandingHeight(int y_offset) const
     return y_offset + 1;
 }
 
-bool MyDbtFeatureExtractorCpp::isFullLine(const std::vector<const Block*>& line, int width) const
+// Make static as it doesn't depend on instance state
+/* static */ bool MyDbtFeatureExtractorCpp::isFullLine(const std::vector<const Block*>& line, int width) const /* const removed */
 {
     // Check only the logical width of the board
     if (line.size() < width)
-        return false; // Should not happen with proper board setup
     return std::all_of(line.begin(), line.begin() + width, [](const Block* b) { return b != nullptr; });
 }
 
-std::vector<int> MyDbtFeatureExtractorCpp::getFullLines(const Board& board) const
+// Make static as it doesn't depend on instance state and calls static isFullLine
+/* static */ std::vector<int> MyDbtFeatureExtractorCpp::getFullLines(const Board& board) const /* const removed */
 {
     std::vector<int> full_lines;
     // Iterate only up to the logical height of the board
     for (int y = 0; y < board.size.height; ++y) {
-        if (isFullLine(board.squares[y], board.size.width)) {
+        // Call the static version
+        if (MyDbtFeatureExtractorCpp::isFullLine(board.squares[y], board.size.width)) {
             full_lines.push_back(y);
         }
     }
@@ -305,12 +307,19 @@ std::vector<int> MyDbtFeatureExtractorCpp::extractFeatures(const Game& game, con
     // Create a second copy for elimination
     Board board_copy_after_elim = board_copy_before_elim;
 
-    // Eliminate lines on the second copy
-    int eliminated_line_count = eliminateLines(board_copy_after_elim); // Modifies board_copy_after_elim
-
     // --- 2. Calculate Features using the copied boards ---
     Features f;
-    std::vector<int> full_lines = getFullLines(board_copy_before_elim); // Need lines before elimination
+    // Call the static version
+    std::vector<int> full_lines = MyDbtFeatureExtractorCpp::getFullLines(board_copy_before_elim); // Need lines before elimination
+
+    // Note: eliminateLines is not called on board_copy_after_elim yet.
+    // Features calculated below use the state *before* line elimination.
+    // This might differ from the Python version's logic if it calculates
+    // some features *after* elimination. Let's assume for now this is intended.
+    // TODO: Verify if features like transitions, holes, wells should use the board *after* elimination.
+
+    f.landing_height = calculateLandingHeight(y_offset);
+    f.eroded_piece_cells = calculateErodedPieceCells(board_copy_before_elim, action, y_offset, full_lines);
 
     f.landing_height = calculateLandingHeight(y_offset);
     f.eroded_piece_cells = calculateErodedPieceCells(board_copy_before_elim, action, y_offset, full_lines);
@@ -435,30 +444,39 @@ bool isCollision(const Board& board, const BlockStatus& action, int y_offset)
 bool isOverflow(const Board& board, const BlockStatus& action, int y_offset)
 {
     // Check if any part of the block *at this y_offset* is at or above the logical height
-    for (const auto& pos : action.rotation.occupied) {
-        if (y_offset + pos.y >= board.size.height) {
-            return true;
-        }
+    auto block_height = action.rotation.size.height;
+    auto new_board = board;
+    for (auto occ: action.rotation.occupied) {
+        auto check_x = action.x_offset + occ.x;
+        auto check_y = y_offset + occ.y;
+        new_board.squares[check_y][check_x] = action.rotation.getOriginalBlock(k_blocks);
     }
-    return false;
+
+    auto extr = MyDbtFeatureExtractorCpp();
+    auto clear_lines = extr.getFullLines(new_board);
+
+    return (y_offset + block_height - static_cast<int>(clear_lines.size()) > board.getGridHeight()) || y_offset < 0;
 }
 
 // Corrected findYOffset implementation (from previous step)
 int findYOffset(const Board& board, const BlockStatus& action)
 {
-    if (isOverflow(board, action, 0)) {
-        return -1; // Cannot place at bottom without overflow
-    }
+    // if (isOverflow(board, action, 0)) {
+    //     return -1; // Cannot place at bottom without overflow
+    // }
 
     // Iterate from y_offset = 0 upwards, checking potential landing spots
     for (int y_offset = 0; y_offset < board.size.height; ++y_offset) {
         if (!isCollision(board, action, y_offset)) {
+            if (isOverflow(board, action, y_offset)) {
+                return -1; // Overflow detected at this y_offset
+            }
             return y_offset; // Found a valid landing position
         }
     }
 
     // TODO(rikka): 检查是否能消除若干行
-    
+
     // If loop completes without collision, check placement at y=0
     // return 0; // Lands at the bottom
     return -1; // No valid landing position found
