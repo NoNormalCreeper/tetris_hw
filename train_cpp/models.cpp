@@ -43,19 +43,23 @@ bool BlockRotation::operator==(const BlockRotation& other) const
 
 // Definition for BlockRotation::getOriginalBlock
 // Needs to be defined after Block is fully defined (which it is via include)
-// Corrected parameter type and implementation to handle pointers:
-const Block* BlockRotation::getOriginalBlock(const std::vector<const Block*>& block_list) const {
-    for (const Block* block_ptr : block_list) { // Iterate through pointers
-        if (!block_ptr) continue; // Safety check for null pointers
-        for (const auto& rotation : block_ptr->rotations) { // Access rotations via pointer
-            if (*this == rotation) { // Compare current rotation object with the one from the list
-                return block_ptr; // Return the pointer to the matching block
-            }
-        }
-    }
-    // If no match found after checking all blocks and their rotations
-    throw std::runtime_error("No matching block found for the given rotation.");
-}
+// REMOVED: This lookup is inefficient and unnecessary if we pass the block context.
+// const Block* BlockRotation::getOriginalBlock(const std::vector<const Block*>& block_list) const {
+//     // This requires searching through block_list, which is inefficient.
+//     // It's better if the context (like BlockStatus or the calling function)
+//     // already knows which Block this rotation belongs to.
+//     // Placeholder implementation - THIS SHOULD BE AVOIDED/REPLACED.
+//     for (const auto* block_ptr : block_list) {
+//         if (block_ptr) {
+//             for (const auto& rot : block_ptr->rotations) {
+//                 if (&rot == this) { // Pointer comparison - might be fragile
+//                     return block_ptr;
+//                 }
+//             }
+//         }
+//     }
+//     throw std::runtime_error("Original block not found for rotation. Refactor needed.");
+// }
 
 Block::Block(std::string n, std::string lbl, int count, std::vector<BlockRotation> rots)
     : name(std::move(n))
@@ -65,11 +69,14 @@ Block::Block(std::string n, std::string lbl, int count, std::vector<BlockRotatio
 {
 }
 
-BlockStatus::BlockStatus(int offset, BlockRotation rot, std::optional<double> score)
+BlockStatus::BlockStatus(int offset, const BlockRotation* rot, std::optional<double> score)
     : x_offset(offset)
-    , rotation(std::move(rot))
+    , rotation(rot) // Store the pointer
     , assessment_score(score)
 {
+    if (!rot) {
+        throw std::invalid_argument("BlockStatus cannot be constructed with a null rotation pointer.");
+    }
 }
 
 // --- Strategy & AI Related Classes Implementation ---
@@ -152,24 +159,40 @@ int Board::getGridHeight() const
     return static_cast<int>(squares.size()); // Use static_cast
 }
 
-Game::Game(GameConfig cfg, Board brd, int scr, std::vector<Block> upcoming)
-    : config(std::move(cfg))
-    , board(std::move(brd))
-    , score(scr)
-    , upcoming_blocks(std::move(upcoming))
+// Game Implementation
+Game::Game(GameConfig cfg, Board b, int s, std::vector<const Block*> upcoming)
+    : config(std::move(cfg)) // Use move for config
+    , board(std::move(b)) // Use move for board
+    , score(s)
+    , upcoming_blocks(std::move(upcoming)) // Use move for upcoming_blocks
+    , game_over(false)
 {
 }
 
-// Copy constructor
+// Copy Constructor
 Game::Game(const Game& other)
-    : config(other.config)
-    , board(other.board)
+    : config(other.config) // GameConfig copy constructor should handle its members
+    , board(other.board) // Board copy constructor should handle its members
     , score(other.score)
-    , upcoming_blocks(other.upcoming_blocks)
+    , upcoming_blocks(other.upcoming_blocks) // Copy the vector of pointers
+    , game_over(other.game_over)
 {
 }
 
-// Copy assignment operator
+// Move Constructor
+Game::Game(Game&& other) noexcept
+    : config(std::move(other.config))
+    , board(std::move(other.board))
+    , score(other.score)
+    , upcoming_blocks(std::move(other.upcoming_blocks))
+    , game_over(other.game_over)
+{
+    // Reset other state if necessary (score, game_over are simple types)
+    other.score = 0;
+    other.game_over = false;
+}
+
+// Copy Assignment Operator
 Game& Game::operator=(const Game& other)
 {
     if (this != &other) {
@@ -177,21 +200,12 @@ Game& Game::operator=(const Game& other)
         board = other.board;
         score = other.score;
         upcoming_blocks = other.upcoming_blocks;
+        game_over = other.game_over;
     }
     return *this;
 }
 
-// Move constructor
-Game::Game(Game&& other) noexcept
-    : config(std::move(other.config))
-    , board(std::move(other.board))
-    , score(other.score)
-    , upcoming_blocks(std::move(other.upcoming_blocks))
-{
-    other.score = 0;
-}
-
-// Move assignment operator
+// Move Assignment Operator
 Game& Game::operator=(Game&& other) noexcept
 {
     if (this != &other) {
@@ -199,21 +213,25 @@ Game& Game::operator=(Game&& other) noexcept
         board = std::move(other.board);
         score = other.score;
         upcoming_blocks = std::move(other.upcoming_blocks);
+        game_over = other.game_over;
+
+        // Reset other state if necessary
         other.score = 0;
+        other.game_over = false;
     }
     return *this;
 }
 
+
 bool Game::isEnd() const
 {
-    return score < 0;
+    return game_over;
 }
 
 void Game::setEnd()
 {
-    if (score >= 0) {
-        score = -score - 1; // Ensure negative, handle score 0
-    }
+    game_over = true;
+    // Consider setting a negative score or specific state if needed
 }
 
 // --- Overall Context Implementation ---

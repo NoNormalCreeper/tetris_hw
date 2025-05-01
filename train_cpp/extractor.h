@@ -10,6 +10,10 @@ class Board;
 struct BlockStatus;
 struct Position;
 
+// Retrieves the original Block pointer associated with a BlockRotation pointer.
+// Definition is in extractor.cpp. Relies on global k_blocks.
+extern const Block* getBlockFromRotation(const BlockRotation* rotation);
+
 class MyDbtFeatureExtractorCpp : public FeatureExtractor {
 private:
     // Helper struct to hold calculated features temporarily

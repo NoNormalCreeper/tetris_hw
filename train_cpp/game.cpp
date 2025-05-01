@@ -1,6 +1,6 @@
 #include "game.h"
 #include "constants.h" // Include k_blocks declaration
-#include "extractor.h" // Include MyDbtFeatureExtractorCpp
+#include "extractor.h" // Include MyDbtFeatureExtractorCpp AND getBlockFromRotation declaration
 #include "models.h"
 #include <algorithm> // For std::max_element
 #include <limits> // For std::numeric_limits
@@ -31,17 +31,13 @@ const Block* getRandomBlock()
 Game createNewGame()
 {
     // Ensure k_blocks is usable (defined in constants.cpp)
-    std::vector<Block> available_blocks_copy;
-    available_blocks_copy.reserve(k_blocks.size());
-    for (const Block* block_ptr : k_blocks) {
-        if (block_ptr) {
-            available_blocks_copy.push_back(*block_ptr); // Copy the blocks
-        }
-    }
-
-    GameConfig config({ 1.0, 3.0, 5.0, 8.0 }, std::move(available_blocks_copy)); // Awards and available blocks
+    // No need to copy blocks for config if GameConfig doesn't require owning copies
+    // Assuming GameConfig can just store awards or other simple config.
+    // If GameConfig *needs* available_blocks, it should store const Block*
+    GameConfig config({ 1.0, 3.0, 5.0, 8.0 }, {}); // Pass empty block list or adjust GameConfig
     Board board(Size(10, 14)); // Standard Tetris size (adjust height as needed)
-    return Game(std::move(config), std::move(board), 0, {}); // Initial score 0, empty upcoming
+    std::vector<const Block*> initial_upcoming; // Empty initial upcoming blocks (pointers)
+    return Game(std::move(config), std::move(board), 0, std::move(initial_upcoming)); // Initial score 0
 }
 
 double calculateLinearFunction(const std::vector<double>& weights, const std::vector<int>& features)
@@ -53,32 +49,39 @@ double calculateLinearFunction(const std::vector<double>& weights, const std::ve
     return std::inner_product(weights.begin(), weights.end(), features.begin(), 0.0);
 }
 
-std::vector<Block> getNewUpcoming(Game& game)
+// Returns pointers to the next upcoming blocks
+std::vector<const Block*> getNewUpcoming(Game& game)
 {
-    if (game.config.available_blocks.empty()) {
-        throw std::runtime_error("No available blocks in game config.");
+    // Assuming game.config doesn't need available_blocks or it stores pointers
+    if (k_blocks.empty()) { // Check global k_blocks directly
+        throw std::runtime_error("No available blocks defined (k_blocks).");
     }
+
+    const Block* block2_ptr = getRandomBlock(); // Get pointer to random block
 
     if (game.upcoming_blocks.empty()) {
         // Game start: Get two random blocks
         const Block* block1_ptr = getRandomBlock();
-        const Block* block2_ptr = getRandomBlock();
-        return { *block1_ptr, *block2_ptr }; // Return copies
+        return { block1_ptr, block2_ptr }; // Return vector of pointers
     } else {
         // Game in progress: Shift blocks and get one new random block
-        const Block* block2_ptr = getRandomBlock();
-        return { game.upcoming_blocks[1], *block2_ptr }; // Return copies
+        // Ensure upcoming_blocks has at least two elements if we access [1]
+        if (game.upcoming_blocks.size() < 2) {
+             throw std::logic_error("Upcoming blocks has less than 2 elements during getNewUpcoming.");
+        }
+        return { game.upcoming_blocks[1], block2_ptr }; // Return vector of pointers
     }
 }
 
 std::vector<BlockStatus> getAllActions(const Block& block, int board_width)
 {
     std::vector<BlockStatus> actions;
+    actions.reserve(block.rotations.size() * board_width); // Pre-allocate estimate
     for (const auto& rotation : block.rotations) {
         int max_x_offset = board_width - rotation.size.width;
         for (int x = 0; x <= max_x_offset; ++x) {
-            // Create BlockStatus with the current rotation (copied)
-            actions.emplace_back(x, rotation); // assessment_score defaults to nullopt
+            // Pass pointer to the rotation
+            actions.emplace_back(x, &rotation); // assessment_score defaults to nullopt
         }
     }
     return actions;
@@ -93,54 +96,56 @@ BlockStatus findBestAction(const Game& game, const std::vector<BlockStatus>& act
         throw std::runtime_error("AssessmentModel has no feature extractor.");
     }
 
-    BlockStatus best_action = actions[0]; // Temporary best
+    std::optional<BlockStatus> best_action_opt; // Use optional to handle no valid actions found initially
     double best_score = -std::numeric_limits<double>::infinity();
-    bool found_valid_action = false;
 
-    for (const auto& current_action_const : actions) {
-        BlockStatus current_action = current_action_const; // Make a mutable copy
+    // Use const& in the loop
+    for (const auto& current_action : actions) {
+        if (!current_action.rotation) continue; // Skip if rotation pointer is null
+
         double current_score = -std::numeric_limits<double>::infinity();
+        std::optional<double> score_opt = std::nullopt; // To store the calculated score
+
         try {
             std::vector<int> features = model.feature_extractor->extractFeatures(game, current_action);
-            // 只取前 8 个特征
-            features.resize(8); // Ensure we only use the first 8 features
-
-            // Ensure weights vector is long enough
-            if (model.weights.size() < features.size()) {
-                throw std::runtime_error("Model weights vector is shorter than feature vector.");
-            }
-            // Only use the number of weights specified by model.length (or min of lengths)
             size_t len_to_use = std::min(static_cast<size_t>(model.length), features.size());
             len_to_use = std::min(len_to_use, model.weights.size());
 
-            // Create temporary vectors of the correct size for calculation
-            std::vector<double> weights_subset(model.weights.begin(), model.weights.begin() + len_to_use);
-            std::vector<int> features_subset(features.begin(), features.begin() + len_to_use);
+            if (len_to_use > 0) {
+                 current_score = std::inner_product(model.weights.begin(), model.weights.begin() + len_to_use,
+                                                   features.begin(), 0.0);
+            } else {
+                 current_score = 0.0;
+            }
 
-            current_score = calculateLinearFunction(weights_subset, features_subset);
-            current_action.assessment_score = current_score; // Store score in the mutable copy
-            found_valid_action = true; // Mark that we found at least one valid action
+            score_opt = current_score; // Store the valid score
 
         } catch (const std::runtime_error& e) {
             // Feature extraction failed (e.g., invalid placement)
-            // Keep score as -infinity, assessment_score remains nullopt or previous value
             current_score = -std::numeric_limits<double>::infinity();
-            current_action.assessment_score = std::nullopt; // Explicitly mark as not scored
+            // score_opt remains nullopt
         }
 
         if (current_score > best_score) {
             best_score = current_score;
-            best_action = current_action; // Store the copy with the score
+            best_action_opt = current_action; // Copy the action here as it's the new best
+            if (best_action_opt) { // Check if copy succeeded (should always)
+                 best_action_opt->assessment_score = score_opt; // Store the score in the best action copy
+            }
+        } else if (!best_action_opt.has_value() && score_opt.has_value()) {
+             // Initialize best_action_opt with the first valid action found
+             best_score = current_score;
+             best_action_opt = current_action;
+             best_action_opt->assessment_score = score_opt;
         }
     }
 
-    if (!found_valid_action) {
-        // This means *every* action resulted in an exception from extractFeatures
-        // This implies a game over state where no piece can be placed.
+    if (!best_action_opt) {
+        // This means *every* action resulted in an exception from extractFeatures or had null rotation
         throw std::runtime_error("No valid actions found - game likely over.");
     }
 
-    return best_action;
+    return best_action_opt.value();
 }
 
 BlockStatus findBestActionV2(const Game& game, const std::vector<BlockStatus>& actions1, const Block& block2, const AssessmentModel& model)
@@ -153,86 +158,128 @@ BlockStatus findBestActionV2(const Game& game, const std::vector<BlockStatus>& a
     }
 
     double best_combined_score = -std::numeric_limits<double>::infinity();
-    // Initialize best_action1 carefully. Find the first valid action if possible.
     std::optional<BlockStatus> best_action1_opt;
 
-    for (const auto& action1_const : actions1) {
-        BlockStatus action1 = action1_const; // Mutable copy
+    // Use const& in the loop
+    for (const auto& action1 : actions1) {
+        if (!action1.rotation) continue; // Skip null rotation
+
         double score1 = -std::numeric_limits<double>::infinity();
         double score2 = -std::numeric_limits<double>::infinity();
         double current_combined_score = -std::numeric_limits<double>::infinity();
+        std::optional<double> score1_opt = std::nullopt;
 
         try {
             // 1. Evaluate the first action (action1) in the current game state
             std::vector<int> features1 = model.feature_extractor->extractFeatures(game, action1);
-            // Use the same feature/weight length logic as findBestAction
-            features1.resize(std::min(features1.size(), static_cast<size_t>(model.length))); // Ensure correct feature count
-            if (model.weights.size() < features1.size()) {
-                // This check might be redundant if model.length is used correctly, but safe
-                throw std::runtime_error("Model weights vector shorter than feature vector for action1.");
-            }
             size_t len_to_use1 = std::min(static_cast<size_t>(model.length), features1.size());
             len_to_use1 = std::min(len_to_use1, model.weights.size());
-            std::vector<double> weights_subset1(model.weights.begin(), model.weights.begin() + len_to_use1);
-            std::vector<int> features_subset1(features1.begin(), features1.begin() + len_to_use1);
-            score1 = calculateLinearFunction(weights_subset1, features_subset1);
-            action1.assessment_score = score1; // Store score in the action copy
 
-            // 2. Simulate placing action1 and evaluate the second step
-            auto game1 = game; // Copy the game state for simulation
-            try {
-                game1 = executeAction(game, action1).first; // Simulate the first move
-            } catch (const std::runtime_error& sim_error) {
-                // If executeAction throws (e.g., game over), this action1 is invalid.
-                // score1 remains valid, but score2 will be -inf.
-                // Log or handle simulation failure if needed.
-                // std::cerr << "Simulation failed for action1: " << sim_error.what() << std::endl;
-                score2 = -std::numeric_limits<double>::infinity(); // Penalize heavily
-                current_combined_score = score1 + score2; // Combine scores
-                // Continue to the comparison below, this path will likely not be chosen.
-                goto compare_scores; // Use goto for clarity in this specific try-catch structure
+            if (len_to_use1 > 0) {
+                 score1 = std::inner_product(model.weights.begin(), model.weights.begin() + len_to_use1,
+                                            features1.begin(), 0.0);
+            } else {
+                 score1 = 0.0;
+            }
+            score1_opt = score1;
+
+            // 2. Simulate placing action1 on a *copy of the board*
+            Board board1 = game.board; // Copy only the board
+            int y_offset1 = findYOffset(game.board, action1); // Find offset on original board
+
+            if (y_offset1 == -1) {
+                // Action1 itself causes overflow/collision, treat as invalid path
+                score2 = -std::numeric_limits<double>::infinity();
+                current_combined_score = score1 + score2; // Will be low
+                goto compare_scores_v2; // Use goto for efficiency here
             }
 
-            // If simulation succeeded, proceed to evaluate the second block
-            if (!game1.isEnd()) { // Only evaluate if the game didn't end after action1
-                auto actions2 = getAllActions(block2, game.board.size.width);
-                if (!actions2.empty()) {
-                    // Find the best action2 for the second block in the simulated state game1
-                    BlockStatus best_action2 = findBestAction(game1, actions2, model);
-                    // Get the score associated with the best second action
-                    score2 = best_action2.assessment_score.value_or(-std::numeric_limits<double>::infinity());
+            // Get the original block pointer for action1
+            const Block* block_to_place1 = getBlockFromRotation(action1.rotation);
+             if (!block_to_place1) {
+                 throw std::runtime_error("Could not determine block type for action1 in V2 sim.");
+             }
+
+            // Place block on the copied board
+            for (const auto& pos : action1.rotation->occupied) { // Use ->
+                int place_x = action1.x_offset + pos.x;
+                int place_y = y_offset1 + pos.y;
+                if (place_y >= 0 && place_y < board1.getGridHeight() && place_x >= 0 && place_x < board1.size.width) {
+                    board1.squares[place_y][place_x] = block_to_place1; // Place pointer
                 } else {
-                    // Should not happen if block2 is valid, but handle defensively
+                     // This indicates a logic error if findYOffset/isOverflow worked correctly
+                     throw std::logic_error("Placement out of bounds during V2 simulation.");
+                }
+            }
+
+            // Eliminate lines on the copied board
+            eliminateLines(board1); // Modifies board1
+
+            // Check for game over *after* placing action1 and clearing lines
+            bool game_over_after_action1 = false;
+             for (int y = game.board.size.height; y < board1.getGridHeight(); ++y) { // Check buffer zone
+                 for (int x = 0; x < board1.size.width; ++x) {
+                     if (board1.squares[y][x] != nullptr) {
+                         game_over_after_action1 = true;
+                         break;
+                     }
+                 }
+                 if (game_over_after_action1) break;
+             }
+
+            if (!game_over_after_action1) {
+                // Create a temporary Game object using the *moved* board1.
+                // GameConfig copy should be cheap or Game needs a constructor taking const GameConfig&.
+                // Assume GameConfig copy is acceptable for now.
+                 std::vector<const Block*> next_upcoming_sim = { &block2, getRandomBlock() }; // Simplified next state
+                 Game game1_sim(game.config, std::move(board1), game.score, std::move(next_upcoming_sim));
+                 // Note: score isn't updated, config is copied, board1 is moved.
+
+                auto actions2 = getAllActions(block2, game.board.size.width); // Use original board width
+                if (!actions2.empty()) {
+                    try {
+                        // Call findBestAction with the simulated game state
+                        BlockStatus best_action2 = findBestAction(game1_sim, actions2, model);
+                        score2 = best_action2.assessment_score.value_or(-std::numeric_limits<double>::infinity());
+                    } catch (const std::runtime_error& e) {
+                         // If findBestAction throws (e.g., no valid moves for block2), score2 remains -inf
+                         score2 = -std::numeric_limits<double>::infinity();
+                    }
+                } else {
+                    // No possible actions for the second block
                     score2 = -std::numeric_limits<double>::infinity();
                 }
             } else {
                 // Game ended immediately after action1
-                score2 = -std::numeric_limits<double>::infinity(); // Or potentially a large penalty
+                score2 = -std::numeric_limits<double>::infinity();
             }
 
-            // 3. Combine scores (simple addition for now)
+            // 3. Combine scores
             current_combined_score = score1 + score2;
 
         } catch (const std::runtime_error& e) {
             // Catch errors during feature extraction for action1 itself
-            // This action is invalid.
-            // std::cerr << "Feature extraction failed for action1: " << e.what() << std::endl;
             score1 = -std::numeric_limits<double>::infinity();
             score2 = -std::numeric_limits<double>::infinity();
             current_combined_score = -std::numeric_limits<double>::infinity();
-            action1.assessment_score = std::nullopt;
+            score1_opt = std::nullopt;
         }
 
-    compare_scores: // Label for goto jump
+    compare_scores_v2: // Label for goto jump
         // 4. Update the best action found so far
         if (current_combined_score > best_combined_score) {
             best_combined_score = current_combined_score;
-            best_action1_opt = action1; // Store the action1 that led to this best combined score
-        } else if (!best_action1_opt.has_value() && action1.assessment_score.has_value()) {
+            best_action1_opt = action1; // Copy action1
+            if (best_action1_opt) {
+                 best_action1_opt->assessment_score = score1_opt; // Store score1 (score of the first step)
+            }
+        } else if (!best_action1_opt.has_value() && score1_opt.has_value()) {
             // Handle initialization: if no best action is set yet, take the first valid one encountered.
-            // This ensures we return *something* if all combined scores are -inf but some action1 are valid.
             best_combined_score = current_combined_score; // Might still be -inf
-            best_action1_opt = action1;
+            best_action1_opt = action1; // Copy action1
+            if (best_action1_opt) {
+                 best_action1_opt->assessment_score = score1_opt;
+            }
         }
     }
 
@@ -250,58 +297,70 @@ BlockStatus findBestActionV2(const Game& game, const std::vector<BlockStatus>& a
     return best_action1_opt.value();
 }
 
-// Forward declare eliminateLines if its definition is in extractor.cpp
-// int eliminateLines(Board& board);
-
-std::pair<Game, int> executeAction(const Game& current_game, const BlockStatus& action)
+// Modifies game state directly, returns y_offset
+int executeAction(Game& game, const BlockStatus& action)
 {
-    // 1. Create a deep copy of the game to modify
-    Game next_game_state = current_game; // Use Game's copy constructor
-    Board& board = next_game_state.board; // Get a reference to the board *in the copy*
+    if (!action.rotation) {
+         throw std::runtime_error("Game Over: executeAction called with null rotation.");
+    }
+    Board& board = game.board; // Get a reference to the game's board
 
-    // 2. Find landing position using the *original* board state (read-only)
-    // Use the findYOffset from extractor.cpp (make sure it's accessible or redefine here)
-    int y_offset = findYOffset(current_game.board, action); // Use original board for finding offset
+    // 2. Find landing position using the current board state
+    int y_offset = findYOffset(board, action); // Use current board
 
     if (y_offset == -1) {
-        // Action immediately results in game over (overflow)
-        next_game_state.setEnd();
-        // Throw exception to signal immediate game over from this action
-        throw std::runtime_error("Game Over: Action causes overflow.");
-        // return {next_game_state, -1}; // Or return the ended state
+        // Action immediately results in game over (overflow or no valid placement)
+        game.setEnd();
+        throw std::runtime_error("Game Over: Action causes overflow or invalid placement.");
     }
 
-    // 3. Place the block on the *copied* board
-    const Block* block_to_place = action.rotation.getOriginalBlock(k_blocks);
-    for (const auto& pos : action.rotation.occupied) {
+    // 3. Place the block directly on the game's board
+    // Get the original block pointer
+    const Block* block_to_place = getBlockFromRotation(action.rotation);
+     if (!block_to_place) {
+         throw std::runtime_error("Could not determine block type during executeAction.");
+     }
+
+    for (const auto& pos : action.rotation->occupied) { // Use ->
         int place_x = action.x_offset + pos.x;
         int place_y = y_offset + pos.y;
-        // Bounds check (redundant if findYOffset is correct, but safe)
+        // Bounds check
         if (place_y >= 0 && place_y < board.getGridHeight() && place_x >= 0 && place_x < board.size.width) {
-            board.squares[place_y][place_x] = block_to_place;
+            board.squares[place_y][place_x] = block_to_place; // Place pointer
         } else {
+            // This indicates a logic error, potentially in findYOffset or action generation
+            game.setEnd(); // Set game over state
             throw std::logic_error("Placement out of bounds during executeAction.");
         }
     }
 
-    // 4. Eliminate lines and update score on the *copied* board
-    int eliminated_lines = eliminateLines(board); // Modifies the copied board
+    // 4. Eliminate lines and update score on the game's board
+    int eliminated_lines = eliminateLines(board); // Modifies the game's board
 
     if (eliminated_lines > 0) {
-        if (eliminated_lines <= static_cast<int>(next_game_state.config.awards.size())) {
-            // Awards are 0-indexed, eliminated_lines is 1-based count
-            next_game_state.score += static_cast<int>(next_game_state.config.awards[eliminated_lines - 1] * 100);
-        } else if (!next_game_state.config.awards.empty()) {
-            // Award for max defined lines if more are cleared
-            next_game_state.score += static_cast<int>(next_game_state.config.awards.back() * 100 * eliminated_lines); // Or some other logic
+        if (eliminated_lines <= static_cast<int>(game.config.awards.size())) {
+            game.score += static_cast<int>(game.config.awards[eliminated_lines - 1] * 100);
+        } else if (!game.config.awards.empty()) {
+            game.score += static_cast<int>(game.config.awards.back() * 100 * eliminated_lines);
         }
     }
 
-    // 5. Update upcoming blocks in the *copied* game state
-    next_game_state.upcoming_blocks = getNewUpcoming(next_game_state);
+     // Check for game over AFTER placement and line clearing (block above ceiling)
+     for (int y = game.board.size.height; y < board.getGridHeight(); ++y) { // Check buffer zone
+         for (int x = 0; x < board.size.width; ++x) {
+             if (board.squares[y][x] != nullptr) {
+                 game.setEnd();
+                 // Return offset even if game ended here, main loop checks isEnd()
+                 return y_offset;
+             }
+         }
+     }
 
-    // 6. Return the new game state and the y_offset
-    return { next_game_state, y_offset };
+    // 5. Update upcoming blocks in the game state (now returns pointers)
+    game.upcoming_blocks = getNewUpcoming(game);
+
+    // 6. Return the y_offset
+    return y_offset;
 }
 
 int runGame(Context& ctx)
@@ -311,28 +370,39 @@ int runGame(Context& ctx)
             // 1. Get current block and generate actions
             if (ctx.game.upcoming_blocks.empty()) {
                 ctx.game.upcoming_blocks = getNewUpcoming(ctx.game);
+                 if (ctx.game.upcoming_blocks.empty()) { // Check if still empty (error case)
+                     throw std::runtime_error("Failed to get initial upcoming blocks.");
+                 }
             }
-            const Block& current_block = ctx.game.upcoming_blocks[0];
+            // upcoming_blocks now holds pointers
+            const Block* current_block_ptr = ctx.game.upcoming_blocks[0];
+             if (!current_block_ptr) {
+                 throw std::runtime_error("Current upcoming block is null.");
+             }
+            const Block& current_block = *current_block_ptr; // Dereference pointer
+
             std::vector<BlockStatus> actions = getAllActions(current_block, ctx.game.board.size.width);
 
-            if (actions.empty()) { // Should not happen if blocks are defined
-                ctx.game.setEnd();
+            if (actions.empty()) {
+                ctx.game.setEnd(); // No actions possible
                 break;
             }
 
             // 2. Find best action
-            // Ensure the strategy and model exist
             if (!ctx.strategy.assessment_model) {
                 throw std::runtime_error("Context strategy has no assessment model.");
             }
-            // BlockStatus best_action = findBestAction(ctx.game, actions, *ctx.strategy.assessment_model);
-            auto best_action = findBestActionV2(ctx.game, actions, ctx.game.upcoming_blocks[1], *ctx.strategy.assessment_model);
+             if (ctx.game.upcoming_blocks.size() < 2 || !ctx.game.upcoming_blocks[1]) {
+                  throw std::runtime_error("Next upcoming block is missing or null for V2.");
+             }
+            const Block& next_block = *ctx.game.upcoming_blocks[1]; // Dereference pointer
 
-            // 3. Execute best action (updates a copy)
-            auto result = executeAction(ctx.game, best_action);
-            ctx.game = std::move(result.first); // Move the new game state into the context
+            BlockStatus best_action = findBestActionV2(ctx.game, actions, next_block, *ctx.strategy.assessment_model);
 
-            // Optional: Add loop counter, visualization calls, etc.
+            // 3. Execute best action (modifies ctx.game directly)
+            executeAction(ctx.game, best_action); // Modifies ctx.game
+
+            // Loop continues until game.isEnd() is true or an exception occurs
         }
     } catch (const std::runtime_error& e) {
         // Catch exceptions from findBestAction (no valid moves) or executeAction (overflow)
@@ -341,13 +411,13 @@ int runGame(Context& ctx)
         if (!ctx.game.isEnd()) {
             ctx.game.setEnd();
         }
-        // Optionally log the error: std::cerr << "Game ended with error: " << e.what() << std::endl;
+        // Optionally log: std::cerr << "Game ended with error: " << e.what() << std::endl;
     } catch (const std::exception& e) {
         // Catch other potential standard exceptions
         if (!ctx.game.isEnd()) {
             ctx.game.setEnd();
         }
-        // Optionally log the error: std::cerr << "Game ended with unexpected error: " << e.what() << std::endl;
+        // Optionally log: std::cerr << "Game ended with unexpected error: " << e.what() << std::endl;
     }
 
     return std::abs(ctx.game.score); // Return absolute score
@@ -355,16 +425,17 @@ int runGame(Context& ctx)
 
 int runGameForTraining(const std::vector<double>& weights)
 {
-    // Create a default assessment model for this run
-    // Assuming MyDbtFeatureExtractorCpp is the desired extractor
     auto feature_extractor = std::make_unique<MyDbtFeatureExtractorCpp>();
-    // Determine length based on weights or a fixed value (e.g., 8 for the core features)
-    int model_length = 8; // Or weights.size(), or a fixed constant
-    model_length = std::min(static_cast<int>(weights.size()), model_length); // Ensure length doesn't exceed weights
+    int model_length = 8;
+    // Ensure weights vector is copied for the model, or model takes const& if lifetime allows
+    std::vector<double> weights_copy = weights;
+    model_length = std::min(static_cast<int>(weights_copy.size()), model_length);
+    // Ensure weights_copy has at least model_length elements if needed by AssessmentModel constructor
+    weights_copy.resize(model_length, 0.0); // Or handle length mismatch appropriately
 
-    auto assessment_model = std::make_unique<AssessmentModel>(model_length, weights, std::move(feature_extractor));
+    auto assessment_model = std::make_unique<AssessmentModel>(model_length, std::move(weights_copy), std::move(feature_extractor));
     Strategy strategy(std::move(assessment_model));
-    Context ctx(createNewGame(), std::move(strategy));
+    Context ctx(createNewGame(), std::move(strategy)); // createNewGame is updated
 
-    return runGame(ctx); // Run the game using the main loop
+    return runGame(ctx); // runGame is updated
 }

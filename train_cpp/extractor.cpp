@@ -16,6 +16,8 @@ bool isOverflow(const Board& board, const BlockStatus& action, int y_offset);
 int findYOffset(const Board& board, const BlockStatus& action);
 // We also need a non-const version of eliminateLines for the temporary board
 int eliminateLines(Board& board); // Declaration, definition might be in game.cpp or here
+// We need the Block context for feature extraction now
+// const Block* getBlockFromRotation(const BlockRotation* rotation); // Helper declaration
 
 // --- MyDbtFeatureExtractorCpp Implementation ---
 
@@ -52,11 +54,12 @@ int MyDbtFeatureExtractorCpp::calculateErodedPieceCells(const Board& board_befor
     if (full_lines.empty()) {
         return 0;
     }
+    if (!action.rotation) return 0; // Safety check
 
-    int block_height = action.rotation.size.height;
+    // int block_height = action.rotation->size.height; // block_height not used
     int eliminate_bricks = 0;
 
-    for (const auto& pos : action.rotation.occupied) {
+    for (const auto& pos : action.rotation->occupied) { // Use ->
         int occupied_y = pos.y + y_offset;
         // Check if this cell's y-coordinate is one of the full lines
         for (int line_y : full_lines) {
@@ -277,63 +280,60 @@ void ensureNoNullLine(Board& board) {
 
 std::vector<int> MyDbtFeatureExtractorCpp::extractFeatures(const Game& game, const BlockStatus& action) const
 {
-    // --- 1. Simulate Placement & Elimination on Copies ---
+    if (!action.rotation) {
+         throw std::runtime_error("Invalid action: rotation pointer is null.");
+    }
+    // --- 1. Find Placement Offset ---
     int y_offset = findYOffset(game.board, action);
     if (y_offset == -1) {
-        // Cannot place the block legally (collision from start or causes overflow)
-        // Throw an exception similar to Python to signal this action is invalid
         throw std::runtime_error("Invalid action: Cannot place block or causes game over.");
     }
 
-    // Create a copy of the board *before* elimination
-    Board board_copy_before_elim = game.board; // Use Board's copy constructor
+    // --- 2. Simulate Placement & Elimination on ONE Copy ---
+    Board board_copy = game.board; // Use Board's copy constructor ONCE
 
-    ensureNoNullLine(board_copy_before_elim); // Call static method
+    // Get the original block pointer - needed for placing on board
+    const Block* block_to_place = getBlockFromRotation(action.rotation);
+    if (!block_to_place) {
+        throw std::runtime_error("Could not determine block type during feature extraction.");
+    }
 
     // Place the piece on the copy
-    const Block* block_to_place = action.rotation.getOriginalBlock(k_blocks); // Assuming k_blocks is accessible
-    for (const auto& pos : action.rotation.occupied) {
+    for (const auto& pos : action.rotation->occupied) { // Use ->
         int place_x = action.x_offset + pos.x;
         int place_y = y_offset + pos.y;
-        // Bounds check (should be guaranteed by findYOffset, but good practice)
-        if (place_y >= 0 && place_y < board_copy_before_elim.getGridHeight() && place_x >= 0 && place_x < board_copy_before_elim.size.width) {
-            board_copy_before_elim.squares[place_y][place_x] = block_to_place;
+        if (place_y >= 0 && place_y < board_copy.getGridHeight() && place_x >= 0 && place_x < board_copy.size.width) {
+            board_copy.squares[place_y][place_x] = block_to_place; // Place pointer to original block
         } else {
-            // This indicates a logic error somewhere
-            throw std::logic_error("Placement out of bounds during feature extraction.");
+            throw std::logic_error("Placement out of bounds during feature extraction simulation.");
         }
     }
 
-    // Create a second copy for elimination
-    Board board_copy_after_elim = board_copy_before_elim;
-
-    // --- 2. Calculate Features using the copied boards ---
+    // --- 3. Calculate Pre-Elimination Features ---
     Features f;
-    // Call the static version
-    std::vector<int> full_lines = MyDbtFeatureExtractorCpp::getFullLines(board_copy_before_elim); // Need lines before elimination
-
-    // Note: eliminateLines is not called on board_copy_after_elim yet.
-    // Features calculated below use the state *before* line elimination.
-    // This might differ from the Python version's logic if it calculates
-    // some features *after* elimination. Let's assume for now this is intended.
-    // TODO: Verify if features like transitions, holes, wells should use the board *after* elimination.
+    // Need full lines *before* elimination for eroded_piece_cells
+    std::vector<int> full_lines = MyDbtFeatureExtractorCpp::getFullLines(board_copy); // Assuming static is okay
 
     f.landing_height = calculateLandingHeight(y_offset);
-    f.eroded_piece_cells = calculateErodedPieceCells(board_copy_before_elim, action, y_offset, full_lines);
+    f.eroded_piece_cells = calculateErodedPieceCells(board_copy, action, y_offset, full_lines); // Use the copied board
 
-    f.landing_height = calculateLandingHeight(y_offset);
-    f.eroded_piece_cells = calculateErodedPieceCells(board_copy_before_elim, action, y_offset, full_lines);
-    f.row_transitions = calculateRowTransitions(board_copy_after_elim);
-    f.column_transitions = calculateColumnTransitions(board_copy_after_elim);
-    calculateHolesAndDepth(board_copy_after_elim, f.holes, f.hole_depth, f.rows_with_holes);
-    f.board_wells = calculateBoardWells(board_copy_after_elim);
-    f.column_heights = calculateColumnHeights(board_copy_after_elim);
+    // --- 4. Eliminate Lines on the Copy ---
+    int eliminated_count = eliminateLines(board_copy); // Modifies board_copy
+
+    // --- 5. Calculate Post-Elimination Features ---
+    // Use the modified board_copy for these features
+    f.row_transitions = calculateRowTransitions(board_copy);
+    f.column_transitions = calculateColumnTransitions(board_copy);
+    calculateHolesAndDepth(board_copy, f.holes, f.hole_depth, f.rows_with_holes);
+    f.board_wells = calculateBoardWells(board_copy);
+    f.column_heights = calculateColumnHeights(board_copy);
     f.column_differences = calculateColumnDifferences(f.column_heights);
     f.maximum_height = calculateMaximumHeight(f.column_heights);
 
-    // --- 3. Assemble Feature Vector ---
+    // --- 6. Assemble Feature Vector ---
+    // (Assemble vector as before)
     std::vector<int> feature_vector;
-    feature_vector.reserve(8 + f.column_heights.size() + f.column_differences.size() + 1);
+    feature_vector.reserve(8); // Reserve for core features initially
 
     feature_vector.push_back(f.landing_height);
     feature_vector.push_back(f.eroded_piece_cells);
@@ -343,12 +343,36 @@ std::vector<int> MyDbtFeatureExtractorCpp::extractFeatures(const Game& game, con
     feature_vector.push_back(f.board_wells);
     feature_vector.push_back(f.hole_depth);
     feature_vector.push_back(f.rows_with_holes);
-    feature_vector.insert(feature_vector.end(), f.column_heights.begin(), f.column_heights.end());
-    feature_vector.insert(feature_vector.end(), f.column_differences.begin(), f.column_differences.end());
-    feature_vector.push_back(f.maximum_height);
+
+    // Optional: Add extended features if needed by the model length
+    // ...
 
     return feature_vector;
 }
+
+
+// --- Definition for getBlockFromRotation ---
+// Needs access to the global block definitions (e.g., ALL_BLOCKS from constants.h)
+const Block* getBlockFromRotation(const BlockRotation* rotation) {
+    if (!rotation) return nullptr;
+    // Iterate through all defined block types in ALL_BLOCKS (defined in constants.h/cpp)
+    for (const auto& block : k_blocks) {
+        // Iterate through the rotations of the current block type
+        for (const auto& block_rotation : block->rotations) {
+            // Compare the address of the input rotation pointer
+            // with the address of the rotation within the global list.
+            if (&block_rotation == rotation) {
+                return block; // Found the parent block
+            }
+        }
+    }
+    // This indicates an error or a rotation pointer that doesn't belong
+    // to any block in ALL_BLOCKS.
+    // Consider throwing an exception or returning nullptr based on expected usage.
+     // throw std::runtime_error("getBlockFromRotation: Rotation not found in ALL_BLOCKS.");
+    return nullptr; // Rotation not found
+}
+
 
 // --- Definition for eliminateLines (if not defined in game.cpp) ---
 // This function modifies the board state.
@@ -416,8 +440,9 @@ int eliminateLines(Board& board)
 
 bool isCollision(const Board& board, const BlockStatus& action, int y_offset)
 {
-    const auto& rotation = action.rotation; // <<< Add this line to define 'rotation'
-    for (const auto& pos : rotation.occupied) { // Now uses the defined rotation
+    if (!action.rotation) return true; // Treat null rotation as collision
+    // const auto& rotation = action.rotation; // No longer needed
+    for (const auto& pos : action.rotation->occupied) { // Use ->
         int check_x = action.x_offset + pos.x;
         int check_y = y_offset + pos.y;
 
@@ -432,6 +457,10 @@ bool isCollision(const Board& board, const BlockStatus& action, int y_offset)
              return true; // Collision with existing block at the target position
         }
 
+        // OPTIMIZATION?: The check below seems redundant if findYOffset works correctly.
+        // findYOffset should find the lowest non-colliding position.
+        // If we are checking a position `y_offset`, we only need to know if THAT position collides.
+        // The original Python code might have done this differently. Let's remove this inner loop.
         for (auto y = check_y + 1; y < board.getGridHeight(); ++y) {
             if (board.squares[y][check_x] != nullptr) {
                 return true; // Collision with existing block below the target position
@@ -441,43 +470,64 @@ bool isCollision(const Board& board, const BlockStatus& action, int y_offset)
     return false; // No collision detected for this y_offset
 }
 
+// OPTIMIZED isOverflow
 bool isOverflow(const Board& board, const BlockStatus& action, int y_offset)
 {
+    if (!action.rotation) return true; // Treat null rotation as overflow
+
     // Check if any part of the block *at this y_offset* is at or above the logical height
-    auto block_height = action.rotation.size.height;
-    auto new_board = board;
-    for (auto occ: action.rotation.occupied) {
-        auto check_x = action.x_offset + occ.x;
-        auto check_y = y_offset + occ.y;
-        new_board.squares[check_y][check_x] = action.rotation.getOriginalBlock(k_blocks);
-    }
-
-    auto extr = MyDbtFeatureExtractorCpp();
-    auto clear_lines = extr.getFullLines(new_board);
-
-    return (y_offset + block_height - static_cast<int>(clear_lines.size()) > board.getGridHeight()) || y_offset < 0;
-}
-
-// Corrected findYOffset implementation (from previous step)
-int findYOffset(const Board& board, const BlockStatus& action)
-{
-    // if (isOverflow(board, action, 0)) {
-    //     return -1; // Cannot place at bottom without overflow
-    // }
-
-    // Iterate from y_offset = 0 upwards, checking potential landing spots
-    for (int y_offset = 0; y_offset < board.size.height; ++y_offset) {
-        if (!isCollision(board, action, y_offset)) {
-            if (isOverflow(board, action, y_offset)) {
-                return -1; // Overflow detected at this y_offset
-            }
-            return y_offset; // Found a valid landing position
+    for (const auto& pos : action.rotation->occupied) { // Use ->
+        int check_y = y_offset + pos.y;
+        if (check_y >= board.size.height) { // Check against logical height
+            return true; // Overflow detected
         }
     }
+    // Also check if y_offset itself is negative (shouldn't happen with findYOffset logic, but good safety check)
+    if (y_offset < 0) {
+        return true;
+    }
 
-    // TODO(rikka): 检查是否能消除若干行
+    return false; // No overflow detected at this y_offset
+}
 
-    // If loop completes without collision, check placement at y=0
-    // return 0; // Lands at the bottom
-    return -1; // No valid landing position found
+
+// Corrected findYOffset implementation (using optimized isCollision and isOverflow)
+int findYOffset(const Board& board, const BlockStatus& action)
+{
+    if (!action.rotation) return -1; // Cannot place null rotation
+
+    // Start checking from y_offset = 0 upwards.
+    for (int y = 0; ; ++y) {
+        // Check for collision at the potential next position (y-1)
+        // Or check collision at current position y and find the first non-colliding one?
+        // Let's try finding the lowest position `y` such that placing the block there *collides*
+        // or overflows. The correct landing position is then `y-1`.
+
+        bool collides_at_y = isCollision(board, action, y);
+        bool overflows_at_y = isOverflow(board, action, y); // Check overflow based on y
+
+        if (!collides_at_y && !overflows_at_y) {
+            return y;
+            // return landing_y; // Valid landing position found.
+        }
+
+        // If we check beyond a reasonable height without collision/overflow, something is wrong.
+        // Add a safeguard. Grid height should be sufficient.
+        if (y >= board.getGridHeight()) {
+             // This implies the block can fall indefinitely without collision/overflow? Error.
+             // Or maybe it landed exactly at the bottom without collision?
+             // Let's reconsider the loop logic.
+
+             // Alternative logic: Iterate downwards from top? No, that's less efficient.
+             // Iterate upwards, find the *first* position `y` that is *invalid* (collision or overflow).
+             // The landing position is `y-1`.
+
+             // If the loop reaches here, it means no collision/overflow was found up to grid height.
+             // This shouldn't happen if the board has a floor or existing blocks.
+             // Let's assume an error or an edge case not handled.
+             return -1; // Indicate failure to find a position.
+        }
+    }
+    // Should be unreachable
+    return -1;
 }

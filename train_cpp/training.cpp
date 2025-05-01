@@ -142,7 +142,7 @@ void runTraining()
 
     // --- 初始化 ---
     std::vector<double> initial_good_params = {
-        -18.3762, 7.4314, -8.1470, -18.6804, -10.1712, -11.5588, -2.1668, -24.7400, 0.0559 // 匹配 Python 的 initial_good_params
+        -15.7048, 5.0653, -6.2143, -8.1510, -12.8274, -11.0465, -1.2093, -31.4287, -2.1718 // 匹配 Python 的 initial_good_params
     };
     if (initial_good_params.size() != k_num_params) {
         log_safe("ERROR: initial_good_params size mismatch. Expected ", k_num_params, ", got ", initial_good_params.size());

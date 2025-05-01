@@ -81,10 +81,12 @@ void visualizeBlocks(const std::vector<const Block*>& blocks)
 
 void visualizeBoard(const Board& board, const BlockStatus& action, int y_offset)
 {
+    if (!action.rotation) return; // Don't visualize if rotation is null
+
     // Create a set of positions for the falling block for quick lookup
     std::vector<Position> falling_block_pos;
-    falling_block_pos.reserve(action.rotation.occupied.size());
-    for (const auto& pos : action.rotation.occupied) {
+    falling_block_pos.reserve(action.rotation->occupied.size()); // Use ->
+    for (const auto& pos : action.rotation->occupied) { // Use ->
         falling_block_pos.emplace_back(action.x_offset + pos.x, y_offset + pos.y);
     }
 
@@ -145,13 +147,15 @@ void visualizeBoard(const Board& board, const BlockStatus& action, int y_offset)
 
 void visualizeAction(const Game& game, const BlockStatus& action)
 {
+    if (!action.rotation) return; // Don't visualize if rotation is null
+
     std::cout << "Current Score: " << game.score << std::endl;
-    if (!game.upcoming_blocks.empty()) {
-        std::cout << "Current Block: " << game.upcoming_blocks[0].label << std::endl;
+    if (!game.upcoming_blocks.empty() && game.upcoming_blocks[0]) { // Check pointer validity
+        std::cout << "Current Block: " << game.upcoming_blocks[0]->label << std::endl;
     } else {
         std::cout << "Current Block: (None)" << std::endl;
     }
-    std::cout << "Best Action: degree=" << action.rotation.label
+    std::cout << "Best Action: degree=" << action.rotation->label // Use ->
               << ", x=" << action.x_offset;
     if (action.assessment_score.has_value()) {
         std::cout << ", score=" << action.assessment_score.value();
@@ -159,20 +163,26 @@ void visualizeAction(const Game& game, const BlockStatus& action)
         std::cout << ", score=(N/A)";
     }
     std::cout << std::endl;
-    // visualizeOccupied(action.rotation.occupied, action.rotation.size); // Optional: visualize the shape itself
+    // visualizeOccupied(action.rotation->occupied, action.rotation->size); // Optional: visualize the shape itself // Use ->
 }
 
 void visualizeGame(const Game& game, const BlockStatus& action, int y_offset, bool show_board)
 {
+    if (!action.rotation) return; // Don't visualize if rotation is null
+
     std::cout << "Current Action:" << std::endl;
-    visualizeAction(game, action);
+    visualizeAction(game, action); // visualizeAction already checks rotation
     if (show_board) {
         std::cout << "Board State:" << std::endl;
         // Need y_offset to show placement correctly
-        visualizeBoard(game.board, action, y_offset);
+        visualizeBoard(game.board, action, y_offset); // visualizeBoard already checks rotation
         std::cout << "Upcoming Blocks: ";
-        for (const auto& block : game.upcoming_blocks) {
-            std::cout << block.label << " ";
+        for (const auto* block_ptr : game.upcoming_blocks) { // Iterate through pointers
+            if (block_ptr) { // Check pointer validity
+                 std::cout << block_ptr->label << " ";
+            } else {
+                 std::cout << "(null) ";
+            }
         }
         std::cout << std::endl;
     }

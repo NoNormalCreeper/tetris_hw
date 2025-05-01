@@ -11,7 +11,7 @@
 // or where the full definition isn't needed in this header.
 class Game;
 class FeatureExtractor;
-struct Block; // Forward declare Block for BlockRotation::getOriginalBlock
+struct Block; // Forward declare Block for BlockRotation::getOriginalBlock and Game::upcoming_blocks
 
 // --- Basic Structures ---
 struct Position {
@@ -52,10 +52,11 @@ struct Block {
 
 struct BlockStatus {
     int x_offset;
-    BlockRotation rotation; // Requires full BlockRotation definition
+    const BlockRotation* rotation; // Changed to pointer
     std::optional<double> assessment_score;
 
-    BlockStatus(int offset, BlockRotation rot, std::optional<double> score = std::nullopt);
+    BlockStatus(int offset, const BlockRotation* rot, std::optional<double> score = std::nullopt); // Updated constructor signature
+    // Default copy/move/assignment should be okay for pointer member
 };
 
 // --- Strategy & AI Related Classes ---
@@ -115,13 +116,14 @@ public:
     GameConfig config; // Requires full GameConfig definition
     Board board;       // Requires full Board definition
     int score;
-    std::vector<Block> upcoming_blocks; // Requires full Block definition
+    std::vector<const Block*> upcoming_blocks; // Changed to vector of pointers
+    bool game_over;
 
-    Game(GameConfig cfg, Board brd, int scr = 0, std::vector<Block> upcoming = {});
-    Game(const Game& other);
-    Game& operator=(const Game& other);
-    Game(Game&& other) noexcept;
-    Game& operator=(Game&& other) noexcept;
+    Game(GameConfig cfg, Board b, int s, std::vector<const Block*> upcoming); // Updated constructor signature
+    Game(const Game& other); // Declare copy constructor
+    Game(Game&& other) noexcept; // Declare move constructor
+    Game& operator=(const Game& other); // Declare copy assignment operator
+    Game& operator=(Game&& other) noexcept; // Declare move assignment operator
 
     bool isEnd() const;
     void setEnd();

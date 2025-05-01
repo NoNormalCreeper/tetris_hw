@@ -14,7 +14,7 @@ Game createNewGame();
 double calculateLinearFunction(const std::vector<double>& weights, const std::vector<int>& features);
 
 // Gets the next two upcoming blocks based on game state and randomness.
-std::vector<Block> getNewUpcoming(Game& game); // Modifies game's random state potentially
+std::vector<const Block*> getNewUpcoming(Game& game); // Modifies game's random state potentially. Returns pointers.
 
 // Generates all possible actions (placements/rotations) for a given block.
 std::vector<BlockStatus> getAllActions(const Block& block, int board_width);
@@ -25,10 +25,10 @@ BlockStatus findBestAction(const Game& game, const std::vector<BlockStatus>& act
 
 BlockStatus findBestActionV2(const Game& game, const std::vector<BlockStatus>& actions1, const Block& block2, const AssessmentModel& model);
 
-// Simulates executing an action on a copy of the game state.
-// Returns the resulting game state and the final y_offset of the placed block.
-// Throws std::runtime_error if the action leads to game over immediately (overflow).
-std::pair<Game, int> executeAction(const Game& current_game, const BlockStatus& action);
+// Executes the chosen action, modifying the game state directly.
+// Returns the y_offset where the block landed, or -1 if the action caused game over.
+// Throws std::runtime_error on immediate game over (overflow).
+int executeAction(Game& game, const BlockStatus& action);
 
 // Runs a complete game simulation using the provided context.
 // Returns the final score.
