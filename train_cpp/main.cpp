@@ -67,11 +67,11 @@ int main()
 
             if (y_offset != -1) {
                 // Visualize the game state *before* executing the action
-                visualizeGame(ctx.game, best_action, y_offset, true); // Show board
+                // visualizeGame(ctx.game, best_action, y_offset, true); // Show board
 
-                // Visualize features for the best action
-                std::vector<int> features = ctx.strategy.assessment_model->feature_extractor->extractFeatures(ctx.game, best_action);
-                visualizeDbtFeature(features);
+                // // Visualize features for the best action
+                // std::vector<int> features = ctx.strategy.assessment_model->feature_extractor->extractFeatures(ctx.game, best_action);
+                // visualizeDbtFeature(features);
 
                 // Execute the action (creates a new game state)
                 auto result = executeAction(ctx.game, best_action);

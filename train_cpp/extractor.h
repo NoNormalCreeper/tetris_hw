@@ -40,8 +40,6 @@ private:
     std::vector<int> calculateColumnDifferences(const std::vector<int>& column_heights) const;
     int calculateMaximumHeight(const std::vector<int>& column_heights) const;
 
-    // Helper to get full lines (needed for eroded cells)
-    std::vector<int> getFullLines(const Board& board) const;
     // Helper to check if a line is full
     bool isFullLine(const std::vector<const Block*>& line, int width) const;
 
@@ -49,6 +47,8 @@ private:
 public:
     // Override the pure virtual function from the base class
     std::vector<int> extractFeatures(const Game& game, const BlockStatus& action) const override;
+    // Helper to get full lines (needed for eroded cells)
+    std::vector<int> getFullLines(const Board& board) const;
     // void ensureNoNullLine(std::vector<std::vector<const Block *>>& squares) const;
 };
 
