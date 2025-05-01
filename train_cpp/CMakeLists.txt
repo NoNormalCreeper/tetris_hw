@@ -68,8 +68,8 @@ target_compile_options(${TEST_EXECUTABLE_NAME} PRIVATE $<$<CONFIG:Release>:-O3>)
 target_compile_options(${TRAIN_EXECUTABLE_NAME} PRIVATE $<$<CONFIG:Release>:-O3>)
 
 # Optional: Add debug flags for debug builds
-target_compile_options(${TEST_EXECUTABLE_NAME} PRIVATE $<$<CONFIG:Debug>:-g>)
-target_compile_options(${TRAIN_EXECUTABLE_NAME} PRIVATE $<$<CONFIG:Debug>:-g>)
+target_compile_options(${TEST_EXECUTABLE_NAME} PRIVATE $<$<CONFIG:Debug>:-O3>)
+target_compile_options(${TRAIN_EXECUTABLE_NAME} PRIVATE $<$<CONFIG:Debug>:-O3>)
 
 # Print a message after configuration
 message(STATUS "Configured ${PROJECT_NAME} version ${PROJECT_VERSION}")
