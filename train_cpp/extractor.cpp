@@ -39,8 +39,10 @@ int MyDbtFeatureExtractorCpp::calculateLandingHeight(int y_offset) const
 /* static */ std::vector<int> MyDbtFeatureExtractorCpp::getFullLines(const Board& board) const /* const removed */
 {
     std::vector<int> full_lines;
+    int height = board.size.height; // Logical height
+    full_lines.reserve(height); // Reserve space
     // Iterate only up to the logical height of the board
-    for (int y = 0; y < board.size.height; ++y) {
+    for (int y = 0; y < height; ++y) {
         // Call the static version
         if (MyDbtFeatureExtractorCpp::isFullLine(board.squares[y], board.size.width)) {
             full_lines.push_back(y);
@@ -254,7 +256,7 @@ std::vector<int> MyDbtFeatureExtractorCpp::calculateColumnDifferences(const std:
         return {};
     }
     std::vector<int> differences;
-    differences.reserve(column_heights.size() - 1);
+    differences.reserve(column_heights.size() - 1); // Reserve exact space
     for (size_t i = 0; i < column_heights.size() - 1; ++i) {
         differences.push_back(std::abs(column_heights[i] - column_heights[i + 1]));
     }
@@ -331,9 +333,8 @@ std::vector<int> MyDbtFeatureExtractorCpp::extractFeatures(const Game& game, con
     f.maximum_height = calculateMaximumHeight(f.column_heights);
 
     // --- 6. Assemble Feature Vector ---
-    // (Assemble vector as before)
     std::vector<int> feature_vector;
-    feature_vector.reserve(8); // Reserve for core features initially
+    feature_vector.reserve(8); // Reserve space for the 8 core features
 
     feature_vector.push_back(f.landing_height);
     feature_vector.push_back(f.eroded_piece_cells);
@@ -381,6 +382,7 @@ int eliminateLines(Board& board)
     std::vector<int> full_lines;
     int width = board.size.width;
     int height = board.size.height; // Logical height
+    full_lines.reserve(height); // Reserve space
 
     // Find full lines within logical height
     for (int y = 0; y < height; ++y) {
@@ -396,7 +398,7 @@ int eliminateLines(Board& board)
         }
     }
 
-    int num_full_lines = full_lines.size();
+    auto num_full_lines = full_lines.size();
     if (num_full_lines == 0) {
         return 0;
     }
