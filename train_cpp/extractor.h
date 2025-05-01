@@ -49,6 +49,7 @@ private:
 public:
     // Override the pure virtual function from the base class
     std::vector<int> extractFeatures(const Game& game, const BlockStatus& action) const override;
+    // void ensureNoNullLine(std::vector<std::vector<const Block *>>& squares) const;
 };
 
 extern int findYOffset(const Board& board, const BlockStatus& action);

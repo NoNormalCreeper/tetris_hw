@@ -154,7 +154,7 @@ void MyDbtFeatureExtractorCpp::calculateHolesAndDepth(const Board& board_after_e
         int current_depth_contribution = 0; // Blocks above current cell in this column scan
 
         // Iterate top-down through the *entire* grid height, including buffer
-        for (int y = grid_height - 1; y >= 0; --y) {
+        for (int y = grid_height - 2; y >= 0; --y) {
             // Only consider cells within the logical board height for hole *detection*
             // but consider blocks *above* the logical height for depth calculation.
             if (squares[y][x] != nullptr) {
@@ -264,6 +264,15 @@ int MyDbtFeatureExtractorCpp::calculateMaximumHeight(const std::vector<int>& col
     return *std::max_element(column_heights.begin(), column_heights.end());
 }
 
+void ensureNoNullLine(Board& board) {
+    auto& squares = board.squares;
+    for (auto& line : squares) {
+        if (line.empty()) {
+            line = std::vector<const Block*>(squares[0].size(), nullptr);
+        }
+    }
+}
+
 std::vector<int> MyDbtFeatureExtractorCpp::extractFeatures(const Game& game, const BlockStatus& action) const
 {
     // --- 1. Simulate Placement & Elimination on Copies ---
@@ -276,6 +285,8 @@ std::vector<int> MyDbtFeatureExtractorCpp::extractFeatures(const Game& game, con
 
     // Create a copy of the board *before* elimination
     Board board_copy_before_elim = game.board; // Use Board's copy constructor
+
+    ensureNoNullLine(board_copy_before_elim); // Call static method
 
     // Place the piece on the copy
     const Block* block_to_place = action.rotation.getOriginalBlock(k_blocks); // Assuming k_blocks is accessible
@@ -385,6 +396,8 @@ int eliminateLines(Board& board)
         std::fill(board.squares[y].begin(), board.squares[y].end(), nullptr);
     }
 
+    ensureNoNullLine(board); // Ensure no null lines remain
+
     return num_full_lines;
 }
 
@@ -407,7 +420,13 @@ bool isCollision(const Board& board, const BlockStatus& action, int y_offset)
         // Check collision with existing blocks within the grid
         // Ensure check_y is within the bounds of the squares vector
         if (check_y < board.getGridHeight() && board.squares[check_y][check_x] != nullptr) {
-            return true; // Collision with another block
+             return true; // Collision with existing block at the target position
+        }
+
+        for (auto y = check_y + 1; y < board.getGridHeight(); ++y) {
+            if (board.squares[y][check_x] != nullptr) {
+                return true; // Collision with existing block below the target position
+            }
         }
     }
     return false; // No collision detected for this y_offset
@@ -427,23 +446,20 @@ bool isOverflow(const Board& board, const BlockStatus& action, int y_offset)
 // Corrected findYOffset implementation (from previous step)
 int findYOffset(const Board& board, const BlockStatus& action)
 {
-    // Iterate from y_offset = 0 upwards, checking potential landing spots
-    for (int y_offset = 0; y_offset < board.size.height; ++y_offset) {
-        if (isCollision(board, action, y_offset)) {
-            // Collision detected at this level y_offset.
-            int landing_y = y_offset - 1;
-            if (landing_y < 0) {
-                return -1; // Collision even at the bottom row
-            }
-            if (isOverflow(board, action, landing_y)) {
-                return -1; // Lands, but overflows
-            }
-            return landing_y; // Valid landing position
-        }
-    }
-    // If loop completes without collision, check placement at y=0
     if (isOverflow(board, action, 0)) {
         return -1; // Cannot place at bottom without overflow
     }
-    return 0; // Lands at the bottom
+
+    // Iterate from y_offset = 0 upwards, checking potential landing spots
+    for (int y_offset = 0; y_offset < board.size.height; ++y_offset) {
+        if (!isCollision(board, action, y_offset)) {
+            return y_offset; // Found a valid landing position
+        }
+    }
+
+    // TODO(rikka): 检查是否能消除若干行
+    
+    // If loop completes without collision, check placement at y=0
+    // return 0; // Lands at the bottom
+    return -1; // No valid landing position found
 }

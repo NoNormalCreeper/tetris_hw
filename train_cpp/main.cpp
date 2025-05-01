@@ -6,6 +6,7 @@
 #include <iostream>
 #include <memory> // For std::make_unique
 #include <stdexcept> // For exception handling
+#include <thread>
 #include <vector>
 
 int main()
@@ -38,67 +39,95 @@ int main()
     }
 
     // --- Simulate One Step & Visualize ---
-    std::cout << "\n--- Simulating One Step ---" << std::endl;
-    try {
-        if (ctx.game.upcoming_blocks.empty()) {
-            std::cout << "No upcoming blocks to play." << std::endl;
-            return 1;
-        }
-        const Block& current_block = ctx.game.upcoming_blocks[0];
-        std::vector<BlockStatus> actions = getAllActions(current_block, ctx.game.board.size.width);
-
-        if (actions.empty()) {
-            std::cout << "No possible actions for the current block." << std::endl;
-            return 1;
-        }
-
-        // Find best action (using the model in the context)
-        BlockStatus best_action = findBestAction(ctx.game, actions, *ctx.strategy.assessment_model);
-
-        // Find landing position for visualization
-        int y_offset = findYOffset(ctx.game.board, best_action);
-
-        if (y_offset != -1) {
-            // Visualize the game state *before* executing the action
-            visualizeGame(ctx.game, best_action, y_offset, true); // Show board
-
-            // Visualize features for the best action
-            std::vector<int> features = ctx.strategy.assessment_model->feature_extractor->extractFeatures(ctx.game, best_action);
-            visualizeDbtFeature(features);
-
-            // Execute the action (creates a new game state)
-            auto result = executeAction(ctx.game, best_action);
-            ctx.game = std::move(result.first); // Update game state in context
-
-            std::cout << "\n--- After Executing Action ---" << std::endl;
-            std::cout << "New Score: " << ctx.game.score << std::endl;
-            if (!ctx.game.upcoming_blocks.empty()) {
-                std::cout << "Next upcoming block: " << ctx.game.upcoming_blocks[0].label << std::endl;
+    std::cout << "\n--- Simulating Steps ---" << std::endl;
+    auto count = -1;
+    auto delay = 0; // Delay in milliseconds
+    for (int i = 0; i != count; i++) {
+        // delay
+        std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+        std::cout << "--- Step " << i + 1 << " ---" << std::endl;
+        try {
+            if (ctx.game.upcoming_blocks.empty()) {
+                std::cout << "No upcoming blocks to play." << std::endl;
+                return 1;
             }
-            // Visualize the board *after* the action (without highlighting placement)
-            // We need a dummy action or modify visualizeBoard to handle this
-            // For simplicity, just print score again.
-            std::cout << "Board state updated." << std::endl;
-
-        } else {
-            std::cout << "Best action leads to game over immediately (overflow)." << std::endl;
-            visualizeAction(ctx.game, best_action); // Show the problematic action
-        }
-
-    } catch (const std::runtime_error& e) {
-        std::cerr << "Error during simulation step: " << e.what() << std::endl;
-        // Visualize the state that caused the error if possible
-        if (!ctx.game.upcoming_blocks.empty()) {
             const Block& current_block = ctx.game.upcoming_blocks[0];
             std::vector<BlockStatus> actions = getAllActions(current_block, ctx.game.board.size.width);
-            if (!actions.empty()) {
-                // Try visualizing the first action as a placeholder
-                int y_offset = findYOffset(ctx.game.board, actions[0]);
-                visualizeGame(ctx.game, actions[0], y_offset, true);
+
+            if (actions.empty()) {
+                std::cout << "No possible actions for the current block." << std::endl;
+                return 1;
             }
+
+            // Find best action (using the model in the context)
+            BlockStatus best_action = findBestAction(ctx.game, actions, *ctx.strategy.assessment_model);
+
+            // Find landing position for visualization
+            int y_offset = findYOffset(ctx.game.board, best_action);
+
+            if (y_offset != -1) {
+                // Visualize the game state *before* executing the action
+                visualizeGame(ctx.game, best_action, y_offset, true); // Show board
+
+                // Visualize features for the best action
+                std::vector<int> features = ctx.strategy.assessment_model->feature_extractor->extractFeatures(ctx.game, best_action);
+                visualizeDbtFeature(features);
+
+                // Execute the action (creates a new game state)
+                auto result = executeAction(ctx.game, best_action);
+                ctx.game = std::move(result.first); // Update game state in context
+
+                std::cout << "\n--- After Executing Action ---" << std::endl;
+                std::cout << "New Score: " << ctx.game.score << std::endl;
+                if (!ctx.game.upcoming_blocks.empty()) {
+                    std::cout << "Next upcoming block: " << ctx.game.upcoming_blocks[0].label << std::endl;
+                }
+                // Visualize the board *after* the action (without highlighting placement)
+                // We need a dummy action or modify visualizeBoard to handle this
+                // For simplicity, just print score again.
+                std::cout << "Board state updated." << std::endl;
+
+            } else {
+                std::cout << "Best action leads to game over immediately (overflow)." << std::endl;
+                visualizeAction(ctx.game, best_action); // Show the problematic action
+            }
+
+        } catch (const std::runtime_error& e) {
+            std::string error_msg = e.what();
+            // Check if the error indicates a game over state where no moves are possible
+            if (error_msg == "No valid actions found - game likely over.") {
+                std::cout << "-----------------------------------------" << std::endl;
+                std::cout << "GAME OVER: No valid moves possible for the current block." << std::endl;
+                // Ensure the game state reflects the end condition
+                if (!ctx.game.isEnd()) {
+                    ctx.game.setEnd();
+                }
+                std::cout << "Final Score: " << ctx.game.score << std::endl;
+                // Optionally visualize the final board state here
+                // visualizeBoard(ctx.game.board); // If you have a function for this
+                std::cout << "-----------------------------------------" << std::endl;
+                break; // <<< ADD BREAK to exit the simulation loop
+            } else if (error_msg.find("Game Over: Action causes overflow.") != std::string::npos) {
+                // Handle the case where executeAction throws due to overflow
+                std::cout << "-----------------------------------------" << std::endl;
+                std::cout << "GAME OVER: Best action resulted in overflow." << std::endl;
+                // executeAction should have called setEnd()
+                std::cout << "Final Score: " << ctx.game.score << std::endl;
+                std::cout << "-----------------------------------------" << std::endl;
+                break; // <<< ADD BREAK to exit the simulation loop
+            } else {
+                // Other runtime errors
+                std::cerr << "Runtime error during simulation step: " << error_msg << std::endl;
+                break; // Exit on other errors too
+            }
+        } catch (const std::exception& e) {
+            // 处理 Ctrl+C 中断
+            if (std::string(e.what()) == "interrupted") {
+                std::cout << "Simulation interrupted by user." << std::endl;
+                break;
+            }
+            std::cerr << "Unexpected error: " << e.what() << std::endl;
         }
-    } catch (const std::exception& e) {
-        std::cerr << "Unexpected error: " << e.what() << std::endl;
     }
 
     // --- Optional: Run a short game ---

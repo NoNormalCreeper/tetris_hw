@@ -102,6 +102,8 @@ BlockStatus findBestAction(const Game& game, const std::vector<BlockStatus>& act
         double current_score = -std::numeric_limits<double>::infinity();
         try {
             std::vector<int> features = model.feature_extractor->extractFeatures(game, current_action);
+            // 只取前 8 个特征
+            features.resize(8); // Ensure we only use the first 8 features
 
             // Ensure weights vector is long enough
             if (model.weights.size() < features.size()) {
