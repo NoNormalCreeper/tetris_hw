@@ -23,6 +23,8 @@ std::vector<BlockStatus> getAllActions(const Block& block, int board_width);
 // Throws std::runtime_error if no valid action is found.
 BlockStatus findBestAction(const Game& game, const std::vector<BlockStatus>& actions, const AssessmentModel& model);
 
+BlockStatus findBestActionV2(const Game& game, const std::vector<BlockStatus>& actions1, const Block& block2, const AssessmentModel& model);
+
 // Simulates executing an action on a copy of the game state.
 // Returns the resulting game state and the final y_offset of the placed block.
 // Throws std::runtime_error if the action leads to game over immediately (overflow).

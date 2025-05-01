@@ -24,7 +24,7 @@ int main()
 
     // Create a default assessment model for testing visualization
     auto feature_extractor = std::make_unique<MyDbtFeatureExtractorCpp>();
-    std::vector<double> test_weights = { -12.63, 6.60, -9.22, -19.77, -13.08, -10.49, -1.61, -24.04 };
+    std::vector<double> test_weights = { -19.0170, 8.3012, -7.6468, -18.8370, -14.5924, -12.0379, -1.6249, -26.9781, -1.1738 };
     // Pad with zeros if needed, or adjust length
     int model_length = 8; // Use first 8 features for this example
     // test_weights.resize(model_length, 0.0); // Ensure weights vector matches length
@@ -45,7 +45,7 @@ int main()
     for (int i = 0; i != count; i++) {
         // delay
         std::this_thread::sleep_for(std::chrono::milliseconds(delay));
-        std::cout << "--- Step " << i + 1 << " ---" << std::endl;
+        // std::cout << "--- Step " << i + 1 << " ---" << std::endl;
         try {
             if (ctx.game.upcoming_blocks.empty()) {
                 std::cout << "No upcoming blocks to play." << std::endl;
@@ -60,7 +60,8 @@ int main()
             }
 
             // Find best action (using the model in the context)
-            BlockStatus best_action = findBestAction(ctx.game, actions, *ctx.strategy.assessment_model);
+            // BlockStatus best_action = findBestAction(ctx.game, actions, *ctx.strategy.assessment_model);
+            auto best_action = findBestActionV2(ctx.game, actions, ctx.game.upcoming_blocks[1], *ctx.strategy.assessment_model);
 
             // Find landing position for visualization
             int y_offset = findYOffset(ctx.game.board, best_action);
@@ -77,15 +78,16 @@ int main()
                 auto result = executeAction(ctx.game, best_action);
                 ctx.game = std::move(result.first); // Update game state in context
 
-                std::cout << "\n--- After Executing Action ---" << std::endl;
-                std::cout << "New Score: " << ctx.game.score << std::endl;
+                // std::cout << "\n--- After Executing Action ---" << std::endl;
+                if (i % 1000 == 0)
+                    std::cout << i << " - New Score: " << ctx.game.score << std::endl;
                 if (!ctx.game.upcoming_blocks.empty()) {
-                    std::cout << "Next upcoming block: " << ctx.game.upcoming_blocks[0].label << std::endl;
+                    // std::cout << "Next upcoming block: " << ctx.game.upcoming_blocks[0].label << std::endl;
                 }
                 // Visualize the board *after* the action (without highlighting placement)
                 // We need a dummy action or modify visualizeBoard to handle this
                 // For simplicity, just print score again.
-                std::cout << "Board state updated." << std::endl;
+                // std::cout << "Board state updated." << std::endl;
 
             } else {
                 std::cout << "Best action leads to game over immediately (overflow)." << std::endl;
@@ -98,6 +100,7 @@ int main()
             if (error_msg == "No valid actions found - game likely over.") {
                 std::cout << "-----------------------------------------" << std::endl;
                 std::cout << "GAME OVER: No valid moves possible for the current block." << std::endl;
+                // visualizeBoard(ctx.game.board, BlockStatus(k_block_I.rotations[0], 0), 16); // Show the final board state
                 // Ensure the game state reflects the end condition
                 if (!ctx.game.isEnd()) {
                     ctx.game.setEnd();

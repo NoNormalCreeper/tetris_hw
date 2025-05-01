@@ -143,6 +143,113 @@ BlockStatus findBestAction(const Game& game, const std::vector<BlockStatus>& act
     return best_action;
 }
 
+BlockStatus findBestActionV2(const Game& game, const std::vector<BlockStatus>& actions1, const Block& block2, const AssessmentModel& model)
+{
+    if (actions1.empty()) {
+        throw std::runtime_error("No actions1 provided to findBestActionV2.");
+    }
+    if (!model.feature_extractor) {
+        throw std::runtime_error("AssessmentModel has no feature extractor for findBestActionV2.");
+    }
+
+    double best_combined_score = -std::numeric_limits<double>::infinity();
+    // Initialize best_action1 carefully. Find the first valid action if possible.
+    std::optional<BlockStatus> best_action1_opt;
+
+    for (const auto& action1_const : actions1) {
+        BlockStatus action1 = action1_const; // Mutable copy
+        double score1 = -std::numeric_limits<double>::infinity();
+        double score2 = -std::numeric_limits<double>::infinity();
+        double current_combined_score = -std::numeric_limits<double>::infinity();
+
+        try {
+            // 1. Evaluate the first action (action1) in the current game state
+            std::vector<int> features1 = model.feature_extractor->extractFeatures(game, action1);
+            // Use the same feature/weight length logic as findBestAction
+            features1.resize(std::min(features1.size(), static_cast<size_t>(model.length))); // Ensure correct feature count
+            if (model.weights.size() < features1.size()) {
+                // This check might be redundant if model.length is used correctly, but safe
+                throw std::runtime_error("Model weights vector shorter than feature vector for action1.");
+            }
+            size_t len_to_use1 = std::min(static_cast<size_t>(model.length), features1.size());
+            len_to_use1 = std::min(len_to_use1, model.weights.size());
+            std::vector<double> weights_subset1(model.weights.begin(), model.weights.begin() + len_to_use1);
+            std::vector<int> features_subset1(features1.begin(), features1.begin() + len_to_use1);
+            score1 = calculateLinearFunction(weights_subset1, features_subset1);
+            action1.assessment_score = score1; // Store score in the action copy
+
+            // 2. Simulate placing action1 and evaluate the second step
+            auto game1 = game; // Copy the game state for simulation
+            try {
+                game1 = executeAction(game, action1).first; // Simulate the first move
+            } catch (const std::runtime_error& sim_error) {
+                // If executeAction throws (e.g., game over), this action1 is invalid.
+                // score1 remains valid, but score2 will be -inf.
+                // Log or handle simulation failure if needed.
+                // std::cerr << "Simulation failed for action1: " << sim_error.what() << std::endl;
+                score2 = -std::numeric_limits<double>::infinity(); // Penalize heavily
+                current_combined_score = score1 + score2; // Combine scores
+                // Continue to the comparison below, this path will likely not be chosen.
+                goto compare_scores; // Use goto for clarity in this specific try-catch structure
+            }
+
+            // If simulation succeeded, proceed to evaluate the second block
+            if (!game1.isEnd()) { // Only evaluate if the game didn't end after action1
+                auto actions2 = getAllActions(block2, game.board.size.width);
+                if (!actions2.empty()) {
+                    // Find the best action2 for the second block in the simulated state game1
+                    BlockStatus best_action2 = findBestAction(game1, actions2, model);
+                    // Get the score associated with the best second action
+                    score2 = best_action2.assessment_score.value_or(-std::numeric_limits<double>::infinity());
+                } else {
+                    // Should not happen if block2 is valid, but handle defensively
+                    score2 = -std::numeric_limits<double>::infinity();
+                }
+            } else {
+                // Game ended immediately after action1
+                score2 = -std::numeric_limits<double>::infinity(); // Or potentially a large penalty
+            }
+
+            // 3. Combine scores (simple addition for now)
+            current_combined_score = score1 + score2;
+
+        } catch (const std::runtime_error& e) {
+            // Catch errors during feature extraction for action1 itself
+            // This action is invalid.
+            // std::cerr << "Feature extraction failed for action1: " << e.what() << std::endl;
+            score1 = -std::numeric_limits<double>::infinity();
+            score2 = -std::numeric_limits<double>::infinity();
+            current_combined_score = -std::numeric_limits<double>::infinity();
+            action1.assessment_score = std::nullopt;
+        }
+
+    compare_scores: // Label for goto jump
+        // 4. Update the best action found so far
+        if (current_combined_score > best_combined_score) {
+            best_combined_score = current_combined_score;
+            best_action1_opt = action1; // Store the action1 that led to this best combined score
+        } else if (!best_action1_opt.has_value() && action1.assessment_score.has_value()) {
+            // Handle initialization: if no best action is set yet, take the first valid one encountered.
+            // This ensures we return *something* if all combined scores are -inf but some action1 are valid.
+            best_combined_score = current_combined_score; // Might still be -inf
+            best_action1_opt = action1;
+        }
+    }
+
+    if (!best_action1_opt) {
+        // This means *no* action1 could even be evaluated (e.g., all failed feature extraction
+        // or all simulations failed immediately). This implies a likely game over state initially.
+        // Fallback: Return the first action, or throw, depending on desired behavior.
+        // Throwing is safer as it indicates an unplayable state.
+        throw std::runtime_error("No valid action sequence found in findBestActionV2 - game likely over.");
+        // return actions1[0]; // Less safe fallback
+    }
+
+    // Store the best *combined* score in the chosen action1 for potential debugging/logging
+    best_action1_opt->assessment_score = best_combined_score;
+    return best_action1_opt.value();
+}
+
 // Forward declare eliminateLines if its definition is in extractor.cpp
 // int eliminateLines(Board& board);
 
@@ -218,7 +325,8 @@ int runGame(Context& ctx)
             if (!ctx.strategy.assessment_model) {
                 throw std::runtime_error("Context strategy has no assessment model.");
             }
-            BlockStatus best_action = findBestAction(ctx.game, actions, *ctx.strategy.assessment_model);
+            // BlockStatus best_action = findBestAction(ctx.game, actions, *ctx.strategy.assessment_model);
+            auto best_action = findBestActionV2(ctx.game, actions, ctx.game.upcoming_blocks[1], *ctx.strategy.assessment_model);
 
             // 3. Execute best action (updates a copy)
             auto result = executeAction(ctx.game, best_action);
