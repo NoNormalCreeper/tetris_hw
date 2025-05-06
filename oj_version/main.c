@@ -233,6 +233,8 @@ const int k_blocks_count = sizeof(k_blocks) / sizeof(k_blocks[0]);
 
 int findYOffset(const Board* board, BlockStatus* action);
 
+void visualizeStep(const Game* game, const BlockStatus* action);
+
 short** GridAlloc(Size* size)
 {
     int width = size->width;
@@ -1038,6 +1040,57 @@ BlockStatus** getAvailableActions(Game* game, Block* block)
     return actions;
 }
 
+BlockStatus* findBestSingleAction(Game* game, AssessmentModel* model) {
+    double best_score = -INFINITY;
+    BlockStatus* best_action = NULL;
+
+    BlockStatus** actions = game->available_statuses_1;
+    for (int i = 0; i < game->available_statuses_1_count; i++) {
+        BlockStatus* action = actions[i];
+        if (action->rotation == NULL) {
+            continue;
+        }
+
+        BlockStatus current_action_eval = *action; // Use a copy
+        current_action_eval.y_offset = INT_MAX; // Reset y_offset for fresh calculation
+        
+        int y_offset = findYOffset(&game->board, &current_action_eval);
+        if (y_offset == -1) {
+            continue; // Invalid placement
+        }
+        current_action_eval.y_offset = y_offset;
+
+        int features_data[k_num_features];
+        Board* board_after_action = NULL;
+        int game_over = 0;
+
+        extractFeatures(&game->board, &current_action_eval, &board_after_action, &game_over, features_data);
+
+        if (game_over) {
+            if (board_after_action) {
+            GridFree(board_after_action->grid, &board_after_action->size);
+            free(board_after_action);
+            }
+            continue;
+        }
+
+        double current_score = caculateLinearFunction(model->weights, features_data, k_num_features);
+
+        if (current_score > best_score) {
+            best_score = current_score;
+            best_action = action; 
+        }
+        
+        // Free the board created by extractFeatures if it's not NULL
+        if (board_after_action) {
+            GridFree(board_after_action->grid, &board_after_action->size);
+            free(board_after_action);
+        }
+    }
+
+    return best_action;
+}
+
 /*
 找到最佳的操作策略
 
@@ -1087,7 +1140,7 @@ void freeActionsArray(BlockStatus** actions, int count) {
 }
 
 // 放置当前的 upcoming_blocks[0]，执行游戏的一步，同时更新 upcoming_blocks
-BlockStatus* runGameStep(Context* ctx, Block* next_block)
+BlockStatus* runGameStep(Context* ctx, Block* next_block, int mode)
 {
     Game* game = ctx->game;
     AssessmentModel* model = ctx->model;
@@ -1116,20 +1169,31 @@ BlockStatus* runGameStep(Context* ctx, Block* next_block)
         }
     }
 
-    BlockStatus** actions_2 = getAvailableActions(game, next_block);
-    game->available_statuses_2 = actions_2;
-    game->available_statuses_2_count = 0; // Reset count before loop
-    if (actions_2 != NULL) { // Check if getAvailableActions succeeded
-        for (int i = 0; actions_2[i] != NULL; i++) {
-             // Check for rotation NULL
-            if (actions_2[i]->rotation == NULL) continue;
-            game->available_statuses_2_count++;
+    if (mode == 2) {
+        BlockStatus** actions_2 = getAvailableActions(game, next_block);
+        game->available_statuses_2 = actions_2;
+        game->available_statuses_2_count = 0; // Reset count before loop
+        if (actions_2 != NULL) { // Check if getAvailableActions succeeded
+            for (int i = 0; actions_2[i] != NULL; i++) {
+                // Check for rotation NULL
+                if (actions_2[i]->rotation == NULL)
+                    continue;
+                game->available_statuses_2_count++;
+            }
         }
     }
 
     // 3. 找到最佳的操作策略
 
-    BlockStatus* best_action = findBestAction(game, model);
+    BlockStatus* best_action = NULL;
+    if (mode == 1) {
+        best_action = findBestSingleAction(game, model);
+    } else if (mode == 2) {
+        best_action = findBestAction(game, model);
+    } else {
+        fprintf(stderr, "Invalid mode: %d\n", mode);
+        return NULL; // Invalid mode
+    }
     if (best_action == NULL) {
         GameSetEnd(game);
         return NULL;
@@ -1193,7 +1257,8 @@ Block* randomBlock(void)
 }
 
 // Pass Context by pointer to allow modification of the seed
-void runRandomTest(Context* ctx)
+// mode 1: single action, mode 2: double action
+void runRandomTest(Context* ctx, int mode)
 {
     Game* game = ctx->game;
 
@@ -1204,7 +1269,7 @@ void runRandomTest(Context* ctx)
 
     BlockStatus* action_taken = NULL;
 
-    action_taken = runGameStep(ctx, NULL);
+    action_taken = runGameStep(ctx, NULL, mode);
     if (action_taken) {
         visualizeStep(ctx->game, action_taken);
         free(action_taken); // Free the returned action
@@ -1216,7 +1281,7 @@ void runRandomTest(Context* ctx)
             printf("Game Over. Final Score: %ld\n", -(ctx->game->score)); // Print positive score
             break;
         }
-        action_taken = runGameStep(ctx, randomBlock());
+        action_taken = runGameStep(ctx, randomBlock(), mode);
         if (action_taken) {
             // visualizeStep(ctx->game, action_taken);
             if (i % 1000 == 0) {
@@ -1227,6 +1292,9 @@ void runRandomTest(Context* ctx)
             action_taken = NULL;
         } else if (ctx->game->score < 0) { // Check game over *after* step attempt
             printf("Game Over during step. Final Score: %ld\n", -(ctx->game->score));
+            printf("%zu steps taken.\n", i);
+            printf("%ld\n", labs(ctx->game->score));
+            // visualizeStep(game, action_taken);
             break;
         } else {
             // Handle unexpected NULL return if game didn't end
@@ -1244,13 +1312,26 @@ void runRandomTest(Context* ctx)
     ctx->game->available_statuses_2_count = 0;
 }
 
-int main()
+const Block* findBlock(char name) {
+    for (int i = 0; i < k_blocks_count; i++) {
+        if (k_blocks[i]->name == name) {
+            return k_blocks[i];
+        }
+    }
+    return NULL;
+}
+
+int main(int argc, char* argv[])
 {
+    if (argc > 1) {
+        // printf("Use arg: %s\n", argv[1]);
+    }
+
     Size grid_size = { 10, 15 };
     Block* upcoming_blocks[2] = { NULL };
     Game game = {
         .config = {
-            .awards = (int[]) { 0, 100, 300, 500, 800 },
+            .awards = (int[]) { 100, 300, 500, 800 },
             .available_blocks = (Block*)k_blocks,
             .available_blocks_count = k_blocks_count },
         .board = { .size = grid_size, .grid = GridAlloc(&grid_size) },
@@ -1264,7 +1345,7 @@ int main()
 
     AssessmentModel assessment_model = {
         .length = 9,
-        .weights = (double[]) { -16.8998, 6.0739, -9.0504, -19.9899, -13.3514, -11.0548, -0.6587, -30.1042, -0.8000 }
+        .weights = (double[]) { -13.9920, 4.9462, -7.8690, -17.6028, -12.8035, -11.8649, -0.8765, -31.3253, -1.8517 }
     };
 
     Context ctx = {
@@ -1273,8 +1354,76 @@ int main()
     };
 
     // Initialize the game
-    runRandomTest(&ctx);
+    if (argc == 1) {
+        runRandomTest(&ctx, 1);
+    } else if (strcmp(argv[1], "single") == 0) {
+        runRandomTest(&ctx, 1);
+    } else if (strcmp(argv[1], "double") == 0) {
+        runRandomTest(&ctx, 2);
+    } else if (strcmp(argv[1], "oj") == 0){
+        char b1 = 0, b2 = 0;
+        // fflush(stdin);
+        scanf("%c%c", &b1, &b2);
+        // fflush(stdin);
+        Block* block1 = findBlock(b1);
+        Block* block2 = findBlock(b2);
+        if (block1 == NULL || block2 == NULL) {
+            fprintf(stderr, "Invalid block names: %c, %c\n", b1, b2);
+            fflush(stdout);
+            return 1;
+        }
 
+        game.upcoming_blocks[0] = block1;
+        game.upcoming_blocks[1] = block2;
+
+        Game* game = ctx.game;
+
+        BlockStatus* action_taken = NULL;
+
+        action_taken = runGameStep(&ctx, NULL, 1);
+        if (action_taken) {
+            printf("%d %d\n%ld\n", action_taken->x_offset, action_taken->rotation->label, labs(ctx.game->score));
+            fflush(stdout);
+            free(action_taken); // Free the returned action
+            action_taken = NULL;
+        }
+
+        for (size_t i = 1;; i++) {
+            if (!b2) {
+                scanf("%c", &b1);
+                while (b1 == '\n') {
+                    scanf("%c", &b1);
+                }
+                if (ctx.game->score < 0) { // Check game over *before* next step
+                    printf("%ld\n", labs(ctx.game->score)); // Print positive score
+                    fflush(stdout);
+                }
+                // printf("CURRENT Upcoming: %c, %c\n", game->upcoming_blocks[0]->name, game->upcoming_blocks[1]->name);
+                action_taken = runGameStep(&ctx, findBlock(b1), 1);
+                if (action_taken) {
+                    printf("%d %d\n%ld\n", action_taken->x_offset, action_taken->rotation->label, labs(ctx.game->score));
+                    fflush(stdout);
+                    free(action_taken); // Free the returned action
+                    action_taken = NULL;
+                } else if (ctx.game->score < 0) { // Check game over *after* step attempt
+                    printf("%ld\n", labs(ctx.game->score));
+                    break;
+                } else {
+                    // Handle unexpected NULL return if game didn't end
+                    fprintf(stderr, "runGameStep returned NULL without ending game.\n");
+                    break;
+                }
+
+                if (b1 == 'X') {
+                    break;
+                }
+            } else {
+                b2 = 0;
+            }
+        }
+    } else {
+        runRandomTest(&ctx, 0);
+    }
     // Cleanup allocated memory before exiting
     GridFree(game.board.grid, &game.board.size); 
     // GridFree(game.board.grid, &game.board.size);
