@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h> // For getpid()
 
 typedef struct {
     void* data; // 指向实际数据的指针
@@ -237,17 +239,20 @@ short** GridAlloc(Size* size)
     int buffer = 5; // buffer for the top of the board
 
     // rows
-    short** grid = (short**)calloc(height + buffer, sizeof(short*));
+    short** grid = (short**)malloc((height + buffer) * sizeof(short*));
     if (grid == NULL) {
         fprintf(stderr, "Failed to alloc grids\n");
         exit(EXIT_FAILURE);
     }
 
-    for (int i = 0; i < height; i++) {
-        grid[i] = (short*)calloc(width, sizeof(short));
+    for (int i = 0; i < height + buffer; i++) {
+        grid[i] = (short*)malloc(width * sizeof(short));
         if (grid[i] == NULL) {
-            fprintf(stderr, "Failed to alloc grids\n");
+            fprintf(stderr, "Failed to alloc grid row\n");
             exit(EXIT_FAILURE);
+        }
+        for (int j = 0; j < width; j++) {
+            grid[i][j] = 0; // Initialize to 0
         }
     }
 
@@ -256,10 +261,19 @@ short** GridAlloc(Size* size)
 
 void GridFree(short** grid, Size* size)
 {
-    for (int i = 0; i < size->height; i++) {
-        free(grid[i]);
+    int buffer = 5; // Match the buffer used in GridAlloc
+    if (grid == NULL) return; // Avoid freeing NULL
+
+    // Free each row pointer up to height + buffer
+    for (int i = 0; i < size->height + buffer; i++) {
+        // Check if the pointer is non-NULL before freeing
+        if (grid[i] != NULL) {
+             free(grid[i]);
+             // grid[i] = NULL; // Optional: good practice
+        }
     }
-    free((void*)grid);
+    // Free the array of row pointers itself
+    free(grid);
 }
 
 IntList* IntListAlloc(int max_size)
@@ -446,6 +460,26 @@ int calcBoardWells(const Board* board_after_elim)
     return wells_sum;
 }
 
+Board* BoardCopy(const Board* board)
+{
+    Board* new_board = (Board*)malloc(sizeof(Board));
+    if (new_board == NULL) {
+        fprintf(stderr, "Failed to alloc new board\n");
+        exit(EXIT_FAILURE);
+    }
+
+    new_board->size = board->size;
+    new_board->grid = GridAlloc(&new_board->size);
+
+    for (int i = 0; i < new_board->size.height + 5; i++) {
+        for (int j = 0; j < new_board->size.width; j++) {
+            new_board->grid[i][j] = board->grid[i][j];
+        }
+    }
+
+    return new_board;
+}
+
 IntList* getFullLines(const Board* board);
 
 int* extractFeatures(const Game* game, const BlockStatus* action)
@@ -456,7 +490,7 @@ int* extractFeatures(const Game* game, const BlockStatus* action)
         exit(EXIT_FAILURE);
     }
 
-    Board board_copy = game->board; // Use Board's copy constructor ONCE
+    Board* board_copy = BoardCopy(&game->board); // Use Board's copy constructor ONCE
 
     // Place the piece on the copy
     for (int i = 0; i < action->rotation->occupied_count; i++) {
@@ -464,16 +498,15 @@ int* extractFeatures(const Game* game, const BlockStatus* action)
         int place_x = action->x_offset + pos.x;
         int place_y = action->y_offset + pos.y;
 
-        if (place_y >= 0 && place_y < board_copy.size.height && place_x >= 0 && place_x < board_copy.size.width) {
-            board_copy.grid[place_y][place_x] = 1; // Place pointer to original block
+        if (place_y >= 0 && place_y < board_copy->size.height && place_x >= 0 && place_x < board_copy->size.width) {
+            board_copy->grid[place_y][place_x] = 1; // Place pointer to original block
         } else {
             fprintf(stderr, "Placement out of bounds during feature extraction simulation.\n");
             exit(EXIT_FAILURE);
         }
     }
 
-    IntList* full_lines = IntListAlloc(board_copy.size.height);
-    full_lines = getFullLines(&board_copy);
+    IntList* full_lines = getFullLines(board_copy);
 
     // 1. Landing Height
     features[0] = action->y_offset + 1;
@@ -482,26 +515,34 @@ int* extractFeatures(const Game* game, const BlockStatus* action)
     features[1] = calcErodedPieceCells(action, full_lines);
 
     // execute the elimination
-    clearFullLines(&board_copy, full_lines);
+    size_t lines_cleared = clearFullLines(board_copy, full_lines);
 
     // 3. Row Transitions
-    features[2] = calcRowTransitions(&board_copy);
+    features[2] = calcRowTransitions(board_copy);
 
     // 4. Column Transitions
-    features[3] = calcColumnTransitions(&board_copy);
+    features[3] = calcColumnTransitions(board_copy);
 
     // 5. Holes
     features[4] = 0;
     // 6. Board Wells
-    features[5] = 0;
+    features[5] = calcBoardWells(board_copy);
     // 7. Hole Depth
     features[6] = 0;
     // 8. Rows with Holes
     features[7] = 0;
 
-    calcHolesAndDepth(&board_copy, &features[4], &features[6], &features[7]);
+    int holes_count = 0;
+    int total_hole_depth = 0;
+    int rows_with_holes_count = 0;
+    calcHolesAndDepth(board_copy, &holes_count, &total_hole_depth, &rows_with_holes_count);
+    features[4] = holes_count;
+    features[6] = total_hole_depth;
+    features[7] = rows_with_holes_count;
 
     IntListFree(full_lines);
+    GridFree(board_copy->grid, &board_copy->size);
+    free(board_copy);
 
     return features;
 }
@@ -532,6 +573,8 @@ int isOutOfIndex(const Board* board, const BlockStatus* action)
             return 1;
         }
     }
+
+    return 0;
 }
 
 /*
@@ -612,6 +655,8 @@ int findYOffset(const Board* board, BlockStatus* action)
     }
 
     for (int y = 0;; y++) {
+        action->y_offset = y;
+
         int collision = isCollision(board, action, y);
         int overflow = isOverflow(board, action, y);
 
@@ -694,31 +739,39 @@ size_t clearFullLines(Board* board, IntList* full_lines)
         return 0;
     }
 
-    // 双指针 (r/w)
-    int write_y = 0;
+    int height_with_buffer = board->size.height + 5;
+    int width = board->size.width;
+    short** grid = board->grid;
 
-    for (int read_y = 0; read_y < board->size.height + 5; read_y++) {
-        int is_full = 0;
-
-        for (size_t i = 0; i < num_full_lines; i++) {
-            if (read_y == full_lines->data[i]) {
-                is_full = 1;
-                break;
-            }
-        }
-
-        if (!is_full) {
-            if (write_y != read_y) {
-                // 向下移动
-                board->grid[write_y] = board->grid[read_y];
-            }
-            write_y++;
+    // Create a temporary array to mark full lines for quick lookup
+    int is_line_full[height_with_buffer];
+    memset(is_line_full, 0, sizeof(is_line_full));
+    for (size_t i = 0; i < num_full_lines; i++) {
+        if (full_lines->data[i] >= 0 && full_lines->data[i] < height_with_buffer) { // Bounds check
+            is_line_full[full_lines->data[i]] = 1;
         }
     }
 
-    // clear top lines
-    for (int y = write_y; y < board->size.height + 5; y++) {
-        memset(board->grid[y], 0, sizeof(short) * board->size.width);
+    int write_y = 0;
+    for (int read_y = 0; read_y < height_with_buffer; read_y++) {
+        if (!is_line_full[read_y]) { // If the read line is NOT full
+            if (write_y != read_y) {
+                // Copy data from read_y row to write_y row instead of pointer assignment
+                memcpy(grid[write_y], grid[read_y], width * sizeof(short));
+            }
+            write_y++; // Move write pointer up
+        }
+        // If the read line IS full, we skip it. Its contents will be overwritten
+        // by a later memcpy or cleared by the memset below.
+        // The memory for the row itself (grid[read_y]) will be freed by GridFree.
+    }
+
+    // Clear the lines at the top (from write_y upwards)
+    for (int y = write_y; y < height_with_buffer; y++) {
+        // Ensure the row pointer is valid before writing (should be unless GridAlloc failed)
+        if (grid[y] != NULL) {
+            memset(grid[y], 0, width * sizeof(short));
+        }
     }
 
     return num_full_lines;
@@ -749,6 +802,7 @@ int executeAction(Game* game, BlockStatus* action, int eliminate)
         GameSetEnd(game);
         return -1;
     }
+    action->y_offset = y_offset;
 
     // place
     for (int i = 0; i < action->rotation->occupied_count; i++) {
@@ -765,7 +819,7 @@ int executeAction(Game* game, BlockStatus* action, int eliminate)
     }
 
     if (eliminate == 0) {
-        return y_offset;
+        return action->y_offset;
     }
 
     // eliminate
@@ -806,31 +860,51 @@ BlockStatus** getAvailableActions(Game* game, Block* block)
 {
     int width = game->board.size.width;
     int actions_count = 0;
-    size_t actions_size = (width * block->rotations_count) + 1;
-    BlockStatus** actions = (BlockStatus**)malloc(sizeof(BlockStatus*) * actions_size);
-    for (size_t i = 0; i < actions_size; i++) {
+    // Estimate max possible actions, adjust if needed
+    size_t actions_capacity = (width * block->rotations_count) + 1;
+    BlockStatus** actions = (BlockStatus**)malloc(sizeof(BlockStatus*) * actions_capacity);
+    if (actions == NULL) {
+        fprintf(stderr, "Failed to alloc actions array\n");
+        exit(EXIT_FAILURE);
+    }
+    // Initialize pointers to NULL
+    for (size_t i = 0; i < actions_capacity; i++) {
         actions[i] = NULL;
     }
 
     for (int i = 0; i < block->rotations_count; i++) {
         BlockRotation* rotation = &block->rotations[i];
         for (int x = 0; x <= width - rotation->size.width; x++) {
+            // Allocate BlockStatus on the heap
             BlockStatus* action = (BlockStatus*)malloc(sizeof(BlockStatus));
-            action = &(BlockStatus) {
-                .x_offset = x,
-                .rotation = rotation,
-                .y_offset = INT_MAX,
-                .assement_score = -INFINITY
-            };
+            if (action == NULL) {
+                fprintf(stderr, "Failed to alloc action\n");
+                // Consider freeing already allocated actions before exiting
+                exit(EXIT_FAILURE);
+            }
+
+            // Initialize the allocated action
+            action->x_offset = x;
+            action->rotation = rotation;
+            action->y_offset = INT_MAX; // Will be calculated by findYOffset
+            action->assement_score = -INFINITY;
+
             action->y_offset = findYOffset(&game->board, action);
             if (action->y_offset == -1) {
-                free(action);
+                free(action); // Free if the action is invalid
             } else {
+                if ((size_t)actions_count >= actions_capacity - 1) {
+                    // Optional: Resize actions array if needed (realloc)
+                    fprintf(stderr, "Actions array capacity exceeded\n");
+                    // Consider freeing allocated memory before exiting
+                    exit(EXIT_FAILURE);
+                }
                 actions[actions_count] = action;
                 actions_count++;
             }
         }
     }
+    actions[actions_count] = NULL; // Keep the NULL terminator convention if used elsewhere
 
     return actions;
 }
@@ -839,82 +913,149 @@ double assessmentTwoActions(Game* game, BlockStatus* action_1, BlockStatus* acti
 {
     double score_1 = -INFINITY;
     double score_2 = -INFINITY;
+    int* features_1 = NULL; // Initialize to NULL
+    int* features_2 = NULL; // Initialize to NULL
+    Board* board_1 = NULL; // Initialize to NULL
+    IntList* full_lines_1 = NULL; // Initialize to NULL
 
-    // 判断
-    if (action_1->rotation == NULL) {
+    // Check initial actions
+    if (action_1 == NULL || action_1->rotation == NULL) {
         return -INFINITY;
     }
-    if (action_2->rotation == NULL) {
-        return -INFINITY;
-    }
-
-    if (isOutOfIndex(&game->board, action_1)) {
-        return -INFINITY;
-    }
-
-    if (isOutOfIndex(&game->board, action_2)) {
-        return -INFINITY;
-    }
-
-    // 评估第一步
-    int* features_1 = extractFeatures(game, action_1);
-    score_1 = caculateLinearFunction(model->weights, features_1, model->length - 1);
-    if (score_1 == -INFINITY) {
+    if (action_2 == NULL || action_2->rotation == NULL) {
+        // This case might be valid if only looking one step ahead is allowed,
+        // but based on findBestAction, it seems we always need a valid action_2.
+        // If action_2 can be invalid, the logic needs adjustment.
+        // Assuming for now it must be valid based on how getAvailableActions works.
         return -INFINITY;
     }
 
-    Board board_1 = game->board; // Copy only the board
-    int y_offset_1 = findYOffset(&game->board, action_1); // Find offset on original board
+    // Calculate y_offset for action_1 based on the *current* game board
+    // Make a temporary copy of action_1 to avoid modifying the original
+    BlockStatus action_1_copy = *action_1;
+    action_1_copy.y_offset = INT_MAX; // Reset y_offset for calculation
+    int y_offset_1 = findYOffset(&game->board, &action_1_copy);
     if (y_offset_1 == -1) {
+        return -INFINITY; // Invalid placement for action_1
+    }
+    // Use the calculated y_offset for feature extraction
+    action_1_copy.y_offset = y_offset_1;
+
+    // Check bounds *after* calculating y_offset
+    if (isOutOfIndex(&game->board, &action_1_copy)) {
         return -INFINITY;
     }
+    // No need to check action_2 bounds here, it's checked later on board_1
 
-    // 第一步放置
-    for (int i = 0; i < action_1->rotation->occupied_count; i++) {
-        Pos pos = action_1->rotation->occupied[i];
-        int place_x = action_1->x_offset + pos.x;
-        int place_y = y_offset_1 + pos.y;
+    // --- Evaluate Step 1 ---
+    features_1 = extractFeatures(game, &action_1_copy); // Use the copy with correct y_offset
+    if (features_1 == NULL) { // Should not happen if malloc succeeds
+        goto cleanup; // Use goto for centralized cleanup on error
+    }
+    score_1 = caculateLinearFunction(model->weights, features_1, k_num_features); // Use k_num_features
 
-        if (place_y >= 0 && place_y < board_1.size.height && place_x >= 0 && place_x < board_1.size.width) {
-            board_1.grid[place_y][place_x] = 1;
-        } else { // error
-            return -INFINITY;
+    // --- Simulate Step 1 ---
+    board_1 = BoardCopy(&game->board);
+    if (board_1 == NULL) {
+        goto cleanup;
+    }
+
+    // Place action_1 on board_1 using the calculated y_offset_1
+    for (int i = 0; i < action_1_copy.rotation->occupied_count; i++) {
+        Pos pos = action_1_copy.rotation->occupied[i];
+        int place_x = action_1_copy.x_offset + pos.x;
+        int place_y = y_offset_1 + pos.y; // Use y_offset_1
+
+        // Check bounds carefully, including buffer zone
+        if (place_y >= 0 && place_y < (board_1->size.height + 5) && place_x >= 0 && place_x < board_1->size.width) {
+            if (place_y < board_1->size.height) { // Check if within logical height
+                board_1->grid[place_y][place_x] = 1;
+            } else {
+                // Placed in buffer zone - indicates game over after this move
+                board_1->grid[place_y][place_x] = 1; // Mark it anyway for simulation
+                score_1 = -INFINITY; // Penalize heavily or mark as game over
+            }
+        } else {
+            // Should not happen if findYOffset and isOutOfIndex work correctly
+            fprintf(stderr, "Error: Placement out of bounds during assessment simulation (Step 1).\n");
+            score_1 = -INFINITY;
+            goto cleanup;
         }
     }
 
-    clearFullLines(&board_1, getFullLines(&board_1));
-
-    // check game over
-    for (int y = board_1.size.height; y < board_1.size.height + 5; y++) {
-        for (int x = 0; x < board_1.size.width; x++) {
-            if (board_1.grid[y][x] != 0) {
-                return -INFINITY;
+    // Clear lines on board_1
+    full_lines_1 = getFullLines(board_1);
+    if (full_lines_1 == NULL) {
+        goto cleanup;
+    }
+    clearFullLines(board_1, full_lines_1);
+    // Check for game over after clearing lines (blocks above logical height)
+    for (int y = board_1->size.height; y < board_1->size.height + 5; y++) {
+        for (int x = 0; x < board_1->size.width; x++) {
+            if (board_1->grid[y][x] != 0) {
+                score_1 = -INFINITY; // Game over after step 1
+                goto cleanup; // No need to evaluate step 2
             }
         }
     }
 
-    // step 2
-    Game game_1 = {
-        .config = game->config,
-        .board = board_1,
-        .upcoming_blocks = game->upcoming_blocks,
-        .available_statuses_1 = game->available_statuses_1,
-        .available_statuses_1_count = game->available_statuses_1_count,
-        .available_statuses_2 = game->available_statuses_2,
-        .available_statuses_2_count = game->available_statuses_2_count
-    };
-    int* features_2 = extractFeatures(&game_1, action_1);
-    score_2 = caculateLinearFunction(model->weights, features_2, model->length - 1);
-    if (score_2 == -INFINITY) {
-        return -INFINITY;
-    }
-
-    int y_offset_2 = findYOffset(&board_1, action_2); // Find offset on original board
+    // --- Evaluate Step 2 ---
+    // Calculate y_offset for action_2 based on *board_1*
+    BlockStatus action_2_copy = *action_2;
+    action_2_copy.y_offset = INT_MAX; // Reset y_offset for calculation
+    int y_offset_2 = findYOffset(board_1, &action_2_copy); // Use board_1
     if (y_offset_2 == -1) {
+        // If placing the second block is impossible, this sequence is bad
+        score_2 = -INFINITY;
+        goto cleanup; // Or apply a large penalty
+    }
+    action_2_copy.y_offset = y_offset_2; // Use the calculated y_offset
+
+    // Check bounds for action_2 on board_1
+    if (isOutOfIndex(board_1, &action_2_copy)) {
+        score_2 = -INFINITY;
+        goto cleanup;
+    }
+
+    // Create a temporary Game struct for step 2 feature extraction
+    Game game_1_state = {
+        .config = game->config, // Copy config (shallow is ok here)
+        .board = *board_1, // Copy board state *after* step 1 placement and clear
+        .score = game->score, // Score doesn't strictly matter for feature extraction
+        .upcoming_blocks = NULL, // Not needed for extractFeatures
+        .available_statuses_1 = NULL, // Not needed
+        .available_statuses_1_count = 0,
+        .available_statuses_2 = NULL, // Not needed
+        .available_statuses_2_count = 0
+    };
+    features_2 = extractFeatures(&game_1_state, &action_2_copy); // Pass action_2_copy
+    if (features_2 == NULL) {
+        goto cleanup;
+    }
+    score_2 = caculateLinearFunction(model->weights, features_2, k_num_features); // Use k_num_features
+
+cleanup:
+    // Free all allocated resources within this function
+    if (features_1 != NULL) {
+        free(features_1);
+    }
+    if (features_2 != NULL) {
+        free(features_2);
+    }
+    if (full_lines_1 != NULL) {
+        IntListFree(full_lines_1);
+    }
+    if (board_1 != NULL) {
+        GridFree(board_1->grid, &board_1->size);
+        free(board_1);
+    }
+
+    // Check for invalid scores before combining
+    if (score_1 <= -INFINITY || score_2 <= -INFINITY) {
         return -INFINITY;
     }
 
-    return score_1 + score_2;
+    return score_1 + score_2; // Return combined score
 }
 
 /*
@@ -929,17 +1070,17 @@ BlockStatus* findBestAction(Game* game, AssessmentModel* model)
     double best_combined_score = -INFINITY;
     BlockStatus* best_action = NULL;
 
-    BlockStatus* actions_1 = game->available_statuses_1;
+    BlockStatus** actions_1 = game->available_statuses_1;
     Block* block_2 = game->upcoming_blocks[1];
 
     for (int i = 0; i < game->available_statuses_1_count; i++) {
-        BlockStatus* action_1 = &actions_1[i];
+        BlockStatus* action_1 = actions_1[i];
         if (action_1->rotation == NULL) {
             continue;
         }
 
         for (int j = 0; j < game->available_statuses_2_count; j++) {
-            BlockStatus* action_2 = &game->available_statuses_2[j];
+            BlockStatus* action_2 = game->available_statuses_2[j];
             double combined_score = assessmentTwoActions(game, action_1, action_2, model);
             if (combined_score > best_combined_score) {
                 best_combined_score = combined_score;
@@ -955,30 +1096,55 @@ BlockStatus* findBestAction(Game* game, AssessmentModel* model)
     return best_action;
 }
 
+void freeActionsArray(BlockStatus** actions, int count) {
+    if (actions == NULL) return;
+    for (int i = 0; i < count; i++) {
+        if (actions[i] != NULL) {
+            free(actions[i]);
+        }
+    }
+    free((void*)actions);
+}
+
 // 放置当前的 upcoming_blocks[0]，执行游戏的一步，同时更新 upcoming_blocks
 BlockStatus* runGameStep(Context* ctx, Block* next_block)
 {
     Game* game = ctx->game;
     AssessmentModel* model = ctx->model;
 
+    // Free actions from the *previous* step before generating new ones
+    freeActionsArray(game->available_statuses_1, game->available_statuses_1_count);
+    game->available_statuses_1 = NULL;
+    game->available_statuses_1_count = 0;
+    freeActionsArray(game->available_statuses_2, game->available_statuses_2_count);
+    game->available_statuses_2 = NULL;
+    game->available_statuses_2_count = 0;
+
+    if (next_block == NULL) {
+        next_block = game->upcoming_blocks[1];
+    }
+
     // 获取所有可能的动作
     BlockStatus** actions_1 = getAvailableActions(game, game->upcoming_blocks[0]);
     game->available_statuses_1 = actions_1;
     game->available_statuses_1_count = 0;
-    for (int i = 0;; i++) {
-        if (actions_1[i] == NULL || actions_1[i]->rotation == NULL) {
-            break;
+    if (actions_1 != NULL) { // Check if getAvailableActions succeeded
+        for (int i = 0; actions_1[i] != NULL; i++) {
+            // Check for rotation NULL just in case, though getAvailableActions should filter invalid ones
+            if (actions_1[i]->rotation == NULL) continue;
+            game->available_statuses_1_count++;
         }
-        game->available_statuses_1_count++;
     }
 
     BlockStatus** actions_2 = getAvailableActions(game, next_block);
     game->available_statuses_2 = actions_2;
-    for (int i = 0;; i++) {
-        if (actions_2[i] == NULL || actions_2[i]->rotation == NULL) {
-            break;
+    game->available_statuses_2_count = 0; // Reset count before loop
+    if (actions_2 != NULL) { // Check if getAvailableActions succeeded
+        for (int i = 0; actions_2[i] != NULL; i++) {
+             // Check for rotation NULL
+            if (actions_2[i]->rotation == NULL) continue;
+            game->available_statuses_2_count++;
         }
-        game->available_statuses_2_count++;
     }
 
     // 3. 找到最佳的操作策略
@@ -989,14 +1155,30 @@ BlockStatus* runGameStep(Context* ctx, Block* next_block)
         return NULL;
     }
 
+    BlockStatus best_action_copy = *best_action;
+
     // 4. 执行操作
-    executeAction(game, best_action, 1);
+    executeAction(game, &best_action_copy, 1);
 
     // 5. 更新 upcoming_blocks
-    game->upcoming_blocks[0] = game->upcoming_blocks[1];
-    game->upcoming_blocks[1] = next_block;
+    if (next_block == NULL) { // 第一次操作，不传入 next_block
+        game->upcoming_blocks[0] = game->upcoming_blocks[1];
+        game->upcoming_blocks[1] = NULL;
+    } else {
+        game->upcoming_blocks[0] = game->upcoming_blocks[1];
+        game->upcoming_blocks[1] = next_block;
+    }
 
-    return best_action;
+    BlockStatus* result_action = (BlockStatus*)malloc(sizeof(BlockStatus));
+    if (result_action == NULL) {
+        fprintf(stderr, "Failed to allocate memory for result action\n");
+        // Handle error appropriately
+        GameSetEnd(game); // Or some other error state
+        return NULL;
+    }
+    *result_action = best_action_copy; // Copy the data
+
+    return result_action; // Caller is responsible for freeing this
 }
 
 /*
@@ -1014,26 +1196,84 @@ void visualizeStep(const Game* game, const BlockStatus* action)
 {
     printf("Current Score: %ld\n", game->score);
     printf("Upcoming Blocks: %c, %c\n", game->upcoming_blocks[0]->name, game->upcoming_blocks[1]->name);
-    printf("Action: %c at (%d, %d)\n", action->rotation->label, action->x_offset, action->y_offset);
+    printf("Action: %ddeg at (%d, %d)\n", action->rotation->label, action->x_offset, action->y_offset);
     printf("Board:\n");
-    for (int y = 0; y < game->board.size.height; y++) {
+    for (int y = game->board.size.height - 1; y >= 0; y--) {
         for (int x = 0; x < game->board.size.width; x++) {
-            printf("%d ", game->board.grid[y][x]);
+            printf("%c ", game->board.grid[y][x] ? '#' : '.');
         }
         printf("\n");
     }
 }
 
+Block* randomBlock(void)
+{
+    // Seed with a combination of time and process ID for better randomness
+    srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
+    int random_index = rand() % k_blocks_count;
+    return k_blocks[random_index];
+}
+
+// Pass Context by pointer to allow modification of the seed
+void runRandomTest(Context* ctx)
+{
+    Game* game = ctx->game;
+
+    srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
+
+    game->upcoming_blocks[0] = randomBlock();
+    game->upcoming_blocks[1] = randomBlock();
+
+    BlockStatus* action_taken = NULL;
+
+    action_taken = runGameStep(ctx, NULL);
+    if (action_taken) {
+        visualizeStep(ctx->game, action_taken);
+        free(action_taken); // Free the returned action
+        action_taken = NULL;
+    }
+
+    for (size_t i = 1; i < 1e6; i++) {
+        if (ctx->game->score < 0) { // Check game over *before* next step
+            printf("Game Over. Final Score: %ld\n", -(ctx->game->score)); // Print positive score
+            break;
+        }
+        action_taken = runGameStep(ctx, randomBlock());
+        if (action_taken) {
+            visualizeStep(ctx->game, action_taken);
+            free(action_taken); // Free the returned action
+            action_taken = NULL;
+        } else if (ctx->game->score < 0) { // Check game over *after* step attempt
+            printf("Game Over during step. Final Score: %ld\n", -(ctx->game->score));
+            break;
+        } else {
+            // Handle unexpected NULL return if game didn't end
+            fprintf(stderr, "runGameStep returned NULL without ending game.\n");
+            break;
+        }
+    }
+
+    // Final cleanup of any remaining actions if the loop finishes naturally
+    freeActionsArray(ctx->game->available_statuses_1, ctx->game->available_statuses_1_count);
+    ctx->game->available_statuses_1 = NULL;
+    ctx->game->available_statuses_1_count = 0;
+    freeActionsArray(ctx->game->available_statuses_2, ctx->game->available_statuses_2_count);
+    ctx->game->available_statuses_2 = NULL;
+    ctx->game->available_statuses_2_count = 0;
+}
+
 int main()
 {
     Size grid_size = { 10, 15 };
+    Block* upcoming_blocks[2] = { NULL };
     Game game = {
         .config = {
             .awards = (int[]) { 0, 100, 300, 500, 800 },
             .available_blocks = (Block*)k_blocks,
             .available_blocks_count = k_blocks_count },
         .board = { .size = grid_size, .grid = GridAlloc(&grid_size) },
-        .upcoming_blocks = NULL,
+        .score = 0,
+        .upcoming_blocks = upcoming_blocks,
         .available_statuses_1 = NULL,
         .available_statuses_1_count = 0,
         .available_statuses_2 = NULL,
@@ -1049,6 +1289,17 @@ int main()
         .game = &game,
         .model = &assessment_model
     };
+
+    // Initialize the game
+    runRandomTest(&ctx);
+
+    // Cleanup allocated memory before exiting
+    GridFree(game.board.grid, &game.board.size); 
+    // GridFree(game.board.grid, &game.board.size);
+    // Free any remaining actions if runRandomTest didn't clean them up (e.g., loop break)
+    freeActionsArray(game.available_statuses_1, game.available_statuses_1_count);
+    freeActionsArray(game.available_statuses_2, game.available_statuses_2_count);
+
 
     return 0;
 }
