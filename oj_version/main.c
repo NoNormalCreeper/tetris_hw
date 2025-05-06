@@ -1,4 +1,3 @@
-
 // #include <cstddef>
 #include <limits.h>
 // #include <cstddef>
@@ -231,6 +230,8 @@ const Block* const k_blocks[] = {
 const int k_blocks_count = sizeof(k_blocks) / sizeof(k_blocks[0]);
 
 // ----------
+
+int findYOffset(const Board* board, BlockStatus* action);
 
 short** GridAlloc(Size* size)
 {
@@ -472,9 +473,14 @@ Board* BoardCopy(const Board* board)
     new_board->grid = GridAlloc(&new_board->size);
 
     for (int i = 0; i < new_board->size.height + 5; i++) {
-        for (int j = 0; j < new_board->size.width; j++) {
-            new_board->grid[i][j] = board->grid[i][j];
+        // Ensure that both source and destination row pointers are valid
+        // GridAlloc should ensure new_board->grid[i] is allocated.
+        // We assume board->grid[i] is also valid.
+        if (board->grid[i] && new_board->grid[i]) {
+            memcpy(new_board->grid[i], board->grid[i], new_board->size.width * sizeof(short));
         }
+        // Else: If pointers could be NULL, error handling or skipping might be needed,
+        // but based on GridAlloc, new_board->grid[i] should be fine.
     }
 
     return new_board;
@@ -482,69 +488,192 @@ Board* BoardCopy(const Board* board)
 
 IntList* getFullLines(const Board* board);
 
-int* extractFeatures(const Game* game, const BlockStatus* action)
+void extractFeatures(const Board* board_before_action, const BlockStatus* action_with_y_offset, Board** out_board_after_action_and_clear, int* out_game_over_flag, int* out_features)
 {
-    int* features = (int*)malloc((k_num_features + 5) * sizeof(int));
-    if (features == NULL) {
-        fprintf(stderr, "Failed to alloc features\n");
-        exit(EXIT_FAILURE);
+    // Initialize outputs
+    *out_game_over_flag = 0;
+    if (out_features != NULL) {
+        memset(out_features, 0, k_num_features * sizeof(int));
+    }
+    if (out_board_after_action_and_clear != NULL) {
+        *out_board_after_action_and_clear = NULL;
     }
 
-    Board* board_copy = BoardCopy(&game->board); // Use Board's copy constructor ONCE
+    if (action_with_y_offset == NULL || action_with_y_offset->rotation == NULL) {
+        *out_game_over_flag = 1;
+        return;
+    }
 
-    // Place the piece on the copy
-    for (int i = 0; i < action->rotation->occupied_count; i++) {
-        Pos pos = action->rotation->occupied[i];
-        int place_x = action->x_offset + pos.x;
-        int place_y = action->y_offset + pos.y;
+    Board* simulated_board = BoardCopy(board_before_action);
+    if (simulated_board == NULL) {
+        *out_game_over_flag = 1; // Critical allocation failure
+        return;
+    }
 
-        if (place_y >= 0 && place_y < board_copy->size.height && place_x >= 0 && place_x < board_copy->size.width) {
-            board_copy->grid[place_y][place_x] = 1; // Place pointer to original block
+    // Place the piece on the simulated_board
+    // action_with_y_offset->y_offset is assumed to be correctly calculated and validated by caller
+    for (int i = 0; i < action_with_y_offset->rotation->occupied_count; i++) {
+        Pos pos = action_with_y_offset->rotation->occupied[i];
+        int place_x = action_with_y_offset->x_offset + pos.x;
+        int place_y = action_with_y_offset->y_offset + pos.y;
+
+        // Check bounds during placement (should be pre-validated by findYOffset and isOutOfIndex)
+        // but as a safeguard, especially against y_offset issues:
+        if (place_x < 0 || place_x >= simulated_board->size.width || place_y < 0) {
+             // This case should ideally not be reached if y_offset is valid
+            *out_game_over_flag = 1;
+            // Free simulated_board before returning if it won't be passed out
+            GridFree(simulated_board->grid, &simulated_board->size);
+            free(simulated_board);
+            return;
+        }
+        // If place_y >= simulated_board->size.height, it's in the buffer.
+        // This is not an immediate game over; depends on whether it clears.
+        if (place_y < simulated_board->size.height + 5) { // Ensure it's within allocated grid
+             simulated_board->grid[place_y][place_x] = 1;
         } else {
-            fprintf(stderr, "Placement out of bounds during feature extraction simulation.\n");
-            exit(EXIT_FAILURE);
+            // Piece placed completely out of allocated buffer - severe error
+            *out_game_over_flag = 1;
+            GridFree(simulated_board->grid, &simulated_board->size);
+            free(simulated_board);
+            return;
         }
     }
 
-    IntList* full_lines = getFullLines(board_copy);
+    IntList* full_lines = getFullLines(simulated_board);
 
     // 1. Landing Height
-    features[0] = action->y_offset + 1;
+    if (out_features) out_features[0] = action_with_y_offset->y_offset + action_with_y_offset->rotation->size.height;
+
 
     // 2. Eroded Cells
-    features[1] = calcErodedPieceCells(action, full_lines);
+    if (out_features) out_features[1] = calcErodedPieceCells(action_with_y_offset, full_lines);
 
-    // execute the elimination
-    size_t lines_cleared = clearFullLines(board_copy, full_lines);
+    // Execute the elimination
+    clearFullLines(simulated_board, full_lines);
+    IntListFree(full_lines); // Free full_lines after use
 
-    // 3. Row Transitions
-    features[2] = calcRowTransitions(board_copy);
+    // Check for game over: if any blocks are in the buffer zone AFTER clearing
+    for (int y = simulated_board->size.height; y < simulated_board->size.height + 5; y++) {
+        for (int x = 0; x < simulated_board->size.width; x++) {
+            if (simulated_board->grid[y][x] != 0) {
+                *out_game_over_flag = 1;
+                goto post_game_over_check; // Exit loops
+            }
+        }
+    }
+post_game_over_check:;
 
-    // 4. Column Transitions
-    features[3] = calcColumnTransitions(board_copy);
+    // If game over, features might be less relevant or could be set to indicate a bad state
+    if (*out_game_over_flag && out_features) {
+        // Optionally, set features to worst-case values if game over
+        // For now, they'll have values from before game over was fully determined,
+        // or zeros if out_features was NULL. The game_over_flag is the primary indicator.
+    }
 
-    // 5. Holes
-    features[4] = 0;
-    // 6. Board Wells
-    features[5] = calcBoardWells(board_copy);
-    // 7. Hole Depth
-    features[6] = 0;
-    // 8. Rows with Holes
-    features[7] = 0;
+    if (out_features) {
+        // 3. Row Transitions
+        out_features[2] = calcRowTransitions(simulated_board);
+        // 4. Column Transitions
+        out_features[3] = calcColumnTransitions(simulated_board);
+        // 5. Holes, 7. Hole Depth, 8. Rows with Holes
+        int holes_count = 0;
+        int total_hole_depth = 0;
+        int rows_with_holes_count = 0;
+        calcHolesAndDepth(simulated_board, &holes_count, &total_hole_depth, &rows_with_holes_count);
+        out_features[4] = holes_count;
+        out_features[6] = total_hole_depth;
+        out_features[7] = rows_with_holes_count;
+        // 6. Board Wells
+        out_features[5] = calcBoardWells(simulated_board);
+    }
 
-    int holes_count = 0;
-    int total_hole_depth = 0;
-    int rows_with_holes_count = 0;
-    calcHolesAndDepth(board_copy, &holes_count, &total_hole_depth, &rows_with_holes_count);
-    features[4] = holes_count;
-    features[6] = total_hole_depth;
-    features[7] = rows_with_holes_count;
 
-    IntListFree(full_lines);
-    GridFree(board_copy->grid, &board_copy->size);
-    free(board_copy);
+    if (out_board_after_action_and_clear != NULL) {
+        *out_board_after_action_and_clear = simulated_board;
+    } else {
+        GridFree(simulated_board->grid, &simulated_board->size);
+        free(simulated_board);
+    }
+}
 
-    return features;
+double assessmentTwoActions(Game* game, BlockStatus* action_1, BlockStatus* action_2, AssessmentModel* model)
+{
+    double score_1 = -INFINITY;
+    double score_2 = -INFINITY;
+    
+    int features_1_data[k_num_features];
+    int features_2_data[k_num_features];
+
+    Board* board_after_step1 = NULL;
+    int game_over_step1 = 0;
+
+    // Check initial actions
+    if (action_1 == NULL || action_1->rotation == NULL) {
+        return -INFINITY;
+    }
+    if (action_2 == NULL || action_2->rotation == NULL) {
+        return -INFINITY;
+    }
+
+    // --- Step 1 ---
+    BlockStatus action_1_eval = *action_1; // Use a copy for y_offset calculation
+    action_1_eval.y_offset = INT_MAX;      // Reset y_offset for fresh calculation
+    int y_offset_1 = findYOffset(&game->board, &action_1_eval);
+
+    if (y_offset_1 == -1) { // findYOffset itself checks for out-of-bounds/collision
+        return -INFINITY; 
+    }
+    action_1_eval.y_offset = y_offset_1; // Set the calculated y_offset
+
+    // No need for explicit isOutOfIndex here, findYOffset handles it via isCollision->isOutOfIndex and isOverflow
+
+    extractFeatures(&game->board, &action_1_eval, &board_after_step1, &game_over_step1, features_1_data);
+
+    if (game_over_step1 || board_after_step1 == NULL) {
+        if (board_after_step1) {
+            GridFree(board_after_step1->grid, &board_after_step1->size);
+            free(board_after_step1);
+        }
+        return -INFINITY;
+    }
+    score_1 = caculateLinearFunction(model->weights, features_1_data, k_num_features);
+
+
+    // --- Step 2 ---
+    BlockStatus action_2_eval = *action_2; // Use a copy
+    action_2_eval.y_offset = INT_MAX;      // Reset y_offset for fresh calculation
+    int y_offset_2 = findYOffset(board_after_step1, &action_2_eval); // Use board_after_step1
+
+    if (y_offset_2 == -1) {
+        GridFree(board_after_step1->grid, &board_after_step1->size);
+        free(board_after_step1);
+        return -INFINITY;
+    }
+    action_2_eval.y_offset = y_offset_2;
+
+    int game_over_step2 = 0;
+    // Pass NULL for out_board_after_action_and_clear as we don't need the board state after step 2
+    extractFeatures(board_after_step1, &action_2_eval, NULL, &game_over_step2, features_2_data);
+    
+    // Free board_after_step1 as it's no longer needed
+    GridFree(board_after_step1->grid, &board_after_step1->size);
+    free(board_after_step1);
+    board_after_step1 = NULL; // Good practice
+
+    if (game_over_step2) {
+        return -INFINITY;
+    }
+    score_2 = caculateLinearFunction(model->weights, features_2_data, k_num_features);
+
+    // Check for invalid scores before combining (e.g. if features led to NaN or Inf)
+    // game_over_step flags should primarily gate this.
+    // If scores can become -INFINITY from non-game-over states, this check is useful.
+    if (score_1 <= -INFINITY || score_2 <= -INFINITY) { // Check against -INFINITY which is used for bad states
+        return -INFINITY;
+    }
+    
+    return score_1 + score_2; // Return combined score
 }
 
 /*
@@ -907,155 +1036,6 @@ BlockStatus** getAvailableActions(Game* game, Block* block)
     actions[actions_count] = NULL; // Keep the NULL terminator convention if used elsewhere
 
     return actions;
-}
-
-double assessmentTwoActions(Game* game, BlockStatus* action_1, BlockStatus* action_2, AssessmentModel* model)
-{
-    double score_1 = -INFINITY;
-    double score_2 = -INFINITY;
-    int* features_1 = NULL; // Initialize to NULL
-    int* features_2 = NULL; // Initialize to NULL
-    Board* board_1 = NULL; // Initialize to NULL
-    IntList* full_lines_1 = NULL; // Initialize to NULL
-
-    // Check initial actions
-    if (action_1 == NULL || action_1->rotation == NULL) {
-        return -INFINITY;
-    }
-    if (action_2 == NULL || action_2->rotation == NULL) {
-        // This case might be valid if only looking one step ahead is allowed,
-        // but based on findBestAction, it seems we always need a valid action_2.
-        // If action_2 can be invalid, the logic needs adjustment.
-        // Assuming for now it must be valid based on how getAvailableActions works.
-        return -INFINITY;
-    }
-
-    // Calculate y_offset for action_1 based on the *current* game board
-    // Make a temporary copy of action_1 to avoid modifying the original
-    BlockStatus action_1_copy = *action_1;
-    action_1_copy.y_offset = INT_MAX; // Reset y_offset for calculation
-    int y_offset_1 = findYOffset(&game->board, &action_1_copy);
-    if (y_offset_1 == -1) {
-        return -INFINITY; // Invalid placement for action_1
-    }
-    // Use the calculated y_offset for feature extraction
-    action_1_copy.y_offset = y_offset_1;
-
-    // Check bounds *after* calculating y_offset
-    if (isOutOfIndex(&game->board, &action_1_copy)) {
-        return -INFINITY;
-    }
-    // No need to check action_2 bounds here, it's checked later on board_1
-
-    // --- Evaluate Step 1 ---
-    features_1 = extractFeatures(game, &action_1_copy); // Use the copy with correct y_offset
-    if (features_1 == NULL) { // Should not happen if malloc succeeds
-        goto cleanup; // Use goto for centralized cleanup on error
-    }
-    score_1 = caculateLinearFunction(model->weights, features_1, k_num_features); // Use k_num_features
-
-    // --- Simulate Step 1 ---
-    board_1 = BoardCopy(&game->board);
-    if (board_1 == NULL) {
-        goto cleanup;
-    }
-
-    // Place action_1 on board_1 using the calculated y_offset_1
-    for (int i = 0; i < action_1_copy.rotation->occupied_count; i++) {
-        Pos pos = action_1_copy.rotation->occupied[i];
-        int place_x = action_1_copy.x_offset + pos.x;
-        int place_y = y_offset_1 + pos.y; // Use y_offset_1
-
-        // Check bounds carefully, including buffer zone
-        if (place_y >= 0 && place_y < (board_1->size.height + 5) && place_x >= 0 && place_x < board_1->size.width) {
-            if (place_y < board_1->size.height) { // Check if within logical height
-                board_1->grid[place_y][place_x] = 1;
-            } else {
-                // Placed in buffer zone - indicates game over after this move
-                board_1->grid[place_y][place_x] = 1; // Mark it anyway for simulation
-                score_1 = -INFINITY; // Penalize heavily or mark as game over
-            }
-        } else {
-            // Should not happen if findYOffset and isOutOfIndex work correctly
-            fprintf(stderr, "Error: Placement out of bounds during assessment simulation (Step 1).\n");
-            score_1 = -INFINITY;
-            goto cleanup;
-        }
-    }
-
-    // Clear lines on board_1
-    full_lines_1 = getFullLines(board_1);
-    if (full_lines_1 == NULL) {
-        goto cleanup;
-    }
-    clearFullLines(board_1, full_lines_1);
-    // Check for game over after clearing lines (blocks above logical height)
-    for (int y = board_1->size.height; y < board_1->size.height + 5; y++) {
-        for (int x = 0; x < board_1->size.width; x++) {
-            if (board_1->grid[y][x] != 0) {
-                score_1 = -INFINITY; // Game over after step 1
-                goto cleanup; // No need to evaluate step 2
-            }
-        }
-    }
-
-    // --- Evaluate Step 2 ---
-    // Calculate y_offset for action_2 based on *board_1*
-    BlockStatus action_2_copy = *action_2;
-    action_2_copy.y_offset = INT_MAX; // Reset y_offset for calculation
-    int y_offset_2 = findYOffset(board_1, &action_2_copy); // Use board_1
-    if (y_offset_2 == -1) {
-        // If placing the second block is impossible, this sequence is bad
-        score_2 = -INFINITY;
-        goto cleanup; // Or apply a large penalty
-    }
-    action_2_copy.y_offset = y_offset_2; // Use the calculated y_offset
-
-    // Check bounds for action_2 on board_1
-    if (isOutOfIndex(board_1, &action_2_copy)) {
-        score_2 = -INFINITY;
-        goto cleanup;
-    }
-
-    // Create a temporary Game struct for step 2 feature extraction
-    Game game_1_state = {
-        .config = game->config, // Copy config (shallow is ok here)
-        .board = *board_1, // Copy board state *after* step 1 placement and clear
-        .score = game->score, // Score doesn't strictly matter for feature extraction
-        .upcoming_blocks = NULL, // Not needed for extractFeatures
-        .available_statuses_1 = NULL, // Not needed
-        .available_statuses_1_count = 0,
-        .available_statuses_2 = NULL, // Not needed
-        .available_statuses_2_count = 0
-    };
-    features_2 = extractFeatures(&game_1_state, &action_2_copy); // Pass action_2_copy
-    if (features_2 == NULL) {
-        goto cleanup;
-    }
-    score_2 = caculateLinearFunction(model->weights, features_2, k_num_features); // Use k_num_features
-
-cleanup:
-    // Free all allocated resources within this function
-    if (features_1 != NULL) {
-        free(features_1);
-    }
-    if (features_2 != NULL) {
-        free(features_2);
-    }
-    if (full_lines_1 != NULL) {
-        IntListFree(full_lines_1);
-    }
-    if (board_1 != NULL) {
-        GridFree(board_1->grid, &board_1->size);
-        free(board_1);
-    }
-
-    // Check for invalid scores before combining
-    if (score_1 <= -INFINITY || score_2 <= -INFINITY) {
-        return -INFINITY;
-    }
-
-    return score_1 + score_2; // Return combined score
 }
 
 /*
