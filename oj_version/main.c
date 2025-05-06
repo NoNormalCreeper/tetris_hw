@@ -268,7 +268,7 @@ void GridFree(short** grid, Size* size)
     for (int i = 0; i < size->height + buffer; i++) {
         // Check if the pointer is non-NULL before freeing
         if (grid[i] != NULL) {
-             free(grid[i]);
+            free(grid[i]);
              // grid[i] = NULL; // Optional: good practice
         }
     }
@@ -391,9 +391,9 @@ int calcColumnTransitions(const Board* board_after_elim)
 
 void calcHolesAndDepth(Board* board_after_elim, int* holes_count, int* total_hole_depth, int* rows_with_holes_count)
 {
-    holes_count = 0;
-    total_hole_depth = 0;
-    rows_with_holes_count = 0;
+    *holes_count = 0;
+    *total_hole_depth = 0;
+    *rows_with_holes_count = 0;
     int rows_with_holes[board_after_elim->size.height + 5]; // Initialize to 0
     memset(rows_with_holes, 0, sizeof(rows_with_holes));
 
@@ -595,7 +595,7 @@ int isCollision(const Board* board, const BlockStatus* action, const int y_offse
         int check_x = action->x_offset + pos.x;
         int check_y = y_offset + pos.y;
 
-        for (int y_itr = check_y + 1; y_itr < board->size.height; y_itr++) {
+        for (int y_itr = check_y; y_itr < board->size.height; y_itr++) {
             if (board->grid[y_itr][check_x] != 0) {
                 return 1;
             }
@@ -1208,8 +1208,6 @@ void visualizeStep(const Game* game, const BlockStatus* action)
 
 Block* randomBlock(void)
 {
-    // Seed with a combination of time and process ID for better randomness
-    srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
     int random_index = rand() % k_blocks_count;
     return k_blocks[random_index];
 }
@@ -1219,7 +1217,7 @@ void runRandomTest(Context* ctx)
 {
     Game* game = ctx->game;
 
-    srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
+    srand((unsigned int)time(NULL));
 
     game->upcoming_blocks[0] = randomBlock();
     game->upcoming_blocks[1] = randomBlock();
@@ -1240,7 +1238,11 @@ void runRandomTest(Context* ctx)
         }
         action_taken = runGameStep(ctx, randomBlock());
         if (action_taken) {
-            visualizeStep(ctx->game, action_taken);
+            // visualizeStep(ctx->game, action_taken);
+            if (i % 1000 == 0) {
+                printf("Step %zu: ", i);
+                visualizeStep(ctx->game, action_taken);
+            }
             free(action_taken); // Free the returned action
             action_taken = NULL;
         } else if (ctx->game->score < 0) { // Check game over *after* step attempt
