@@ -7,13 +7,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h> // For getpid()
+// #include <unistd.h> // For getpid()
 
 typedef struct {
-    void* data; // 指向实际数据的指针
-    size_t size; // 当前存储的元素数量
-    size_t capacity; // 当前分配的内存能容纳的元素数量
-    size_t element_size; // 每个元素的大小（字节）
+    void* data; // 
+    size_t size; // 
+    size_t capacity; // 
+    size_t element_size; // 
 } Vector;
 
 typedef struct {
@@ -24,66 +24,66 @@ typedef struct {
 typedef struct {
     int width;
     int height;
-} Size; // 大小
+} Size; // 
 
 typedef struct {
     int x;
     int y;
-} Pos; // Position，位置
+} Pos; // Position
 
 typedef struct {
-    int label; // 用于显示的方块旋转角度
-    Size size; // 当前状态的方块大小
-    Pos* occupied; // 占用的格子的位置的列表
-    int occupied_count; // 占用的格子数量
-} BlockRotation; // （用于定义枚举）方块的一个旋转状态
+    int label; // 
+    Size size; // 
+    Pos* occupied; // 
+    int occupied_count; // 
+} BlockRotation; // 
 
 typedef struct {
-    char name; // 用于显示的方块名称
-    BlockRotation* rotations; // 旋转状态的列表
-    int rotations_count; // 旋转状态的数量
-} Block; // （用于定义枚举）一种方块类型
+    char name; // 
+    BlockRotation* rotations; // 
+    int rotations_count; // 
+} Block; // 
 
 typedef struct {
-    int x_offset; // x坐标
-    BlockRotation* rotation; // 旋转状态
-    int y_offset; // y坐标，默认为 +infinity，需要进行计算才知道
-    double assement_score; // 评估分数，默认为 -infinity，需要后续进行计算
-} BlockStatus; // （用于遍历评估策略）一种放置的策略
+    int x_offset; // x
+    BlockRotation* rotation; // 
+    int y_offset; // y +infinity
+    double assement_score; //  -infinity
+} BlockStatus; // 
 
 typedef struct {
-    int length; // 模型参数个数
-    double* weights; // 权重，长度为 length+1，最后一位是常数项
-} AssessmentModel; // 评估策略的评估模型
+    int length; // 
+    double* weights; //  length+1
+} AssessmentModel; // 
 
 typedef struct {
-    int* awards; // 分别消除 1, 2, 3, 4 行的奖励
-    Block* available_blocks; // 可用的方块列表
-    int available_blocks_count; // 可用的方块数量
-} GameConfig; // 游戏配置
+    int* awards; //  1, 2, 3, 4 
+    Block* available_blocks; // 
+    int available_blocks_count; // 
+} GameConfig; // 
 
 typedef struct {
-    Size size; // 游戏区域可操作空间的大小，高度为死亡判定线减 1
-    short** grid; // 游戏区域的网格，1 代表占用，0 代表空闲；数组的大小高度应该比逻辑高度多 5 作为缓冲
-} Board; // 游戏区域
+    Size size; //  1
+    short** grid; // 1 0  5 
+} Board; // 
 
 typedef struct {
-    GameConfig config; // 游戏配置
+    GameConfig config; // 
 
-    Board board; // 游戏区域当前状态
-    long score; // 当前分数，若为负数则表示游戏结束
+    Board board; // 
+    long score; // 
 
-    Block** upcoming_blocks; // 即将到来的方块列表，共 2 个
-    BlockStatus** available_statuses_1; // 第一步可用的放置策略列表
-    int available_statuses_1_count; // 第一步可用的放置策略数量
-    BlockStatus** available_statuses_2; // 第二步可用的放置策略列表
-    int available_statuses_2_count; // 第二步可用的放置策略数量
-} Game; // 游戏状态
+    Block** upcoming_blocks; //  2 
+    BlockStatus** available_statuses_1; // 
+    int available_statuses_1_count; // 
+    BlockStatus** available_statuses_2; // 
+    int available_statuses_2_count; // 
+} Game; // 
 
 typedef struct {
     Game* game;
     AssessmentModel* model;
-} Context; // 整个程序的上下文
+} Context; // 
 
 double caculateLinearFunction(double* weights, int* features, int feature_length)
 {
@@ -91,22 +91,22 @@ double caculateLinearFunction(double* weights, int* features, int feature_length
     for (int i = 0; i < feature_length; i++) {
         result += weights[i] * features[i];
     }
-    result += weights[feature_length]; // 常数项
+    result += weights[feature_length]; // 
     return result;
 }
 
-const int k_num_features = 8; // 特征数量
+const int k_num_features = 8; // 
 
 // ----- Block Rotation consts -----
 
 const Block k_block_I = {
     .name = 'I',
     .rotations = (BlockRotation[]) {
-        { .label = 0,
+        { .label = 90,
             .size = { 1, 4 },
             .occupied = (Pos[]) { { 0, 0 }, { 0, 1 }, { 0, 2 }, { 0, 3 } },
             .occupied_count = 4 },
-        { .label = 90,
+        { .label = 0,
             .size = { 4, 1 },
             .occupied = (Pos[]) { { 0, 0 }, { 1, 0 }, { 2, 0 }, { 3, 0 } },
             .occupied_count = 4 } },
@@ -312,7 +312,7 @@ int* IntListAt(IntList* list, int index)
     return &list->data[index];
 }
 
-// 在列表末尾添加一个元素（保证不大于 max_size），并返回该元素的索引
+//  max_size
 size_t IntListPush(IntList* list, int value)
 {
     list->data[list->length] = value;
@@ -524,7 +524,7 @@ void extractFeatures(const Board* board_before_action, const BlockStatus* action
             return;
         }
         // If place_y >= simulated_board->size.height, it's in the buffer
-        // not an game over，depends on whether it clears
+        // not an game overdepends on whether it clears
         if (place_y < simulated_board->size.height + 5) {
             simulated_board->grid[place_y][place_x] = 1;
         } else {
@@ -555,11 +555,12 @@ void extractFeatures(const Board* board_before_action, const BlockStatus* action
         for (int x = 0; x < simulated_board->size.width; x++) {
             if (simulated_board->grid[y][x] != 0) {
                 *out_game_over_flag = 1;
-                goto post_game_over_check; // Exit loops
+                // goto post_game_over_check; // Exit loops
+                return;
             }
         }
     }
-post_game_over_check:;
+// post_game_over_check:;
 
     // if (*out_game_over_flag && out_features) {
     // }
@@ -1119,11 +1120,21 @@ void freeActionsArray(BlockStatus** actions, int count)
     free((void*)actions);
 }
 
-// 放置当前的 upcoming_blocks[0]，执行游戏的一步，同时更新 upcoming_blocks
+//  upcoming_blocks[0] upcoming_blocks
 BlockStatus* runGameStep(Context* ctx, Block* next_block, int mode)
 {
     Game* game = ctx->game;
     AssessmentModel* model = ctx->model;
+
+    // update upcoming_blocks
+
+    if (next_block == NULL) { //  next_block
+        // game->upcoming_blocks[0] = game->upcoming_blocks[1];
+        // game->upcoming_blocks[1] = NULL;
+    } else {
+        game->upcoming_blocks[0] = game->upcoming_blocks[1];
+        game->upcoming_blocks[1] = next_block;
+    }
 
     // free actions from previous step before generating new
 
@@ -1134,9 +1145,9 @@ BlockStatus* runGameStep(Context* ctx, Block* next_block, int mode)
     game->available_statuses_2 = NULL;
     game->available_statuses_2_count = 0;
 
-    if (next_block == NULL) {
-        next_block = game->upcoming_blocks[1];
-    }
+    // if (next_block == NULL) {
+    //     next_block = game->upcoming_blocks[1];
+    // }
 
     // get available actions
 
@@ -1153,6 +1164,9 @@ BlockStatus* runGameStep(Context* ctx, Block* next_block, int mode)
     }
 
     if (mode == 2) {
+        if (next_block == NULL) {
+            next_block = game->upcoming_blocks[1];
+        }
         BlockStatus** actions_2 = getAvailableActions(game, next_block);
         game->available_statuses_2 = actions_2;
         game->available_statuses_2_count = 0; // Reset count before loop
@@ -1187,16 +1201,6 @@ BlockStatus* runGameStep(Context* ctx, Block* next_block, int mode)
 
     executeAction(game, &best_action_copy, 1);
 
-    // update upcoming_blocks
-
-    if (next_block == NULL) { // 第一次操作，不传入 next_block
-        game->upcoming_blocks[0] = game->upcoming_blocks[1];
-        game->upcoming_blocks[1] = NULL;
-    } else {
-        game->upcoming_blocks[0] = game->upcoming_blocks[1];
-        game->upcoming_blocks[1] = next_block;
-    }
-
     BlockStatus* result_action = (BlockStatus*)malloc(sizeof(BlockStatus));
     if (result_action == NULL) {
         fprintf(stderr, "Failed to alloc for result action\n");
@@ -1222,7 +1226,7 @@ BlockStatus* runGameStep(Context* ctx, Block* next_block, int mode)
 void visualizeStep(const Game* game, const BlockStatus* action)
 {
     printf("Current Score: %ld\n", game->score);
-    printf("Upcoming Blocks: %c, %c\n", game->upcoming_blocks[0]->name, game->upcoming_blocks[1]->name);
+    printf("Upcoming Blocks: %c, %c\n", game->upcoming_blocks[0]->name, (game->upcoming_blocks[1] ? game->upcoming_blocks[1]->name : '-'));
     printf("Action: %ddeg at (%d, %d)\n", action->rotation->label, action->x_offset, action->y_offset);
     printf("Board:\n");
     for (int y = game->board.size.height - 1; y >= 0; y--) {
@@ -1300,7 +1304,25 @@ const Block* findBlock(char name)
             return k_blocks[i];
         }
     }
+    // printf("No block found with name: %c\n", name);
     return NULL;
+}
+
+int degreeToNo(int degree)
+{
+    switch (degree) {
+    case 0:
+        return 0;
+    case 90:
+        return 1;
+    case 180:
+        return 2;
+    case 270:
+        return 3;
+    default:
+        fprintf(stderr, "Invalid degree: %d\n", degree);
+        return -1;
+    }
 }
 
 int main(int argc, char* argv[])
@@ -1309,7 +1331,8 @@ int main(int argc, char* argv[])
         // printf("Use arg: %s\n", argv[1]);
     }
 
-    Size grid_size = { 10, 15 };
+    Size grid_size = { 10, 20 };
+
     Block* upcoming_blocks[2] = { NULL };
     Game game = {
         .config = {
@@ -1327,30 +1350,33 @@ int main(int argc, char* argv[])
 
     AssessmentModel assessment_model = {
         .length = 9,
-        .weights = (double[]) { -13.9920, 4.9462, -7.8690, -17.6028, -12.8035, -11.8649, -0.8765, -31.3253, -1.8517 }
+        .weights = (double[]) { -15.7778, 6.2347, -8.8812, -19.6290, -16.0015, -12.1729, -1.5963, -30.3512, 0.3048 }
     };
 
     Context ctx = {
         .game = &game,
         .model = &assessment_model
     };
+    
+    goto oj;
 
     // Initialize the game
-    // if (argc == -1) {
-    //     runRandomTest(&ctx, 1);
-    // } else if (strcmp(argv[1], "single") == 0) {
-    //     runRandomTest(&ctx, 1);
-    // } else if (strcmp(argv[1], "double") == 0) {
-    //     runRandomTest(&ctx, 2);
-    // } else if (1 || strcmp(argv[1], "oj") == 0) {
-    {
+    if (argc == 1) {
+        runRandomTest(&ctx, 1);
+    } else if (strcmp(argv[1], "single") == 0) {
+        runRandomTest(&ctx, 1);
+    } else if (strcmp(argv[1], "double") == 0) {
+        runRandomTest(&ctx, 2);
+    } else if (1 || strcmp(argv[1], "oj") == 0) {
+    // {
+oj:;
         char b1 = 0, b2 = 0;
         // fflush(stdin);
         scanf("%c%c", &b1, &b2);
         // fflush(stdin);
         Block* block1 = findBlock(b1);
         Block* block2 = findBlock(b2);
-        if (block1 == NULL || block2 == NULL) {
+        if (block1 == NULL) {
             fprintf(stderr, "Invalid block names: %c, %c\n", b1, b2);
             fflush(stdout);
             return 1;
@@ -1359,38 +1385,51 @@ int main(int argc, char* argv[])
         game.upcoming_blocks[0] = block1;
         game.upcoming_blocks[1] = block2;
 
-        Game* game = ctx.game;
+        // Game* game = ctx.game;
 
         BlockStatus* action_taken = NULL;
 
-        action_taken = runGameStep(&ctx, NULL, 1);
+        action_taken = runGameStep(&ctx, NULL, 2);
         if (action_taken) {
-            printf("%d %d\n%ld\n", action_taken->x_offset, action_taken->rotation->label, labs(ctx.game->score));
+            printf("%d %d\n%ld\n", degreeToNo(action_taken->rotation->label), action_taken->x_offset, labs(ctx.game->score));
+            // visualizeStep(game, action_taken);
             fflush(stdout);
             free(action_taken);
             action_taken = NULL;
         }
 
-        for (size_t i = 1;; i++) {
+        for (int i = 0; i < 1000010 ; i++) {
             if (!b2) {
                 scanf("%c", &b1);
                 while (b1 == '\n') {
                     scanf("%c", &b1);
                 }
-                if (ctx.game->score < 0) { // check game over before next step
-                    printf("%ld\n", labs(ctx.game->score));
-                    fflush(stdout);
+
+                if (b1 == 'E') {
+                    break;
                 }
+                
+                if (b1 == EOF) {
+                    break;
+                }
+
+                // if (ctx.game->score < 0 || ctx.game->score > 1000000) { // check game over before next step
+                //     // printf("%ld\n", labs(ctx.game->score));
+                //     // fflush(stdout);
+                //     return 0;
+                // }
                 // printf("CURRENT Upcoming: %c, %c\n", game->upcoming_blocks[0]->name, game->upcoming_blocks[1]->name);
-                action_taken = runGameStep(&ctx, findBlock(b1), 1);
+                action_taken = runGameStep(&ctx, findBlock(b1), 2);
                 if (action_taken) {
-                    printf("%d %d\n%ld\n", action_taken->x_offset, action_taken->rotation->label, labs(ctx.game->score));
+                    printf("%d %d\n%ld\n", degreeToNo(action_taken->rotation->label), action_taken->x_offset, labs(ctx.game->score));
+                    // visualizeStep(game, action_taken);
                     fflush(stdout);
                     free(action_taken);
                     action_taken = NULL;
                 } else if (ctx.game->score < 0) { // check game over after step attempt
-                    printf("%ld\n", labs(ctx.game->score));
-                    break;
+                    // printf("%ld\n", labs(ctx.game->score));
+                    // break;
+                    // return 0;
                 } else {
                     fprintf(stderr, "runGameStep returned NULL without ending game.\n");
                     break;
@@ -1403,11 +1442,15 @@ int main(int argc, char* argv[])
                 b2 = 0;
             }
         }
-    }
-    // } else {
-    //     runRandomTest(&ctx, 0);
+
+        goto end;
     // }
-    // Cleanup allocated memory before exiting
+    } else {
+        runRandomTest(&ctx, 0);
+    }
+
+    end:;
+    // Cleanup before exiting
     GridFree(game.board.grid, &game.board.size);
     // GridFree(game.board.grid, &game.board.size);
     freeActionsArray(game.available_statuses_1, game.available_statuses_1_count);
