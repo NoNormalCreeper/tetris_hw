@@ -9,11 +9,28 @@
 #include <time.h>
 // #include <unistd.h> // For getpid()
 
+// Conditions
+#ifdef CONSIDER_2
+#define NUM_CONSIDER 2
+#pragma message("NUM_CONSIDER is 2.")
+#else
+#define NUM_CONSIDER 1
+#pragma message("NUM_CONSIDER is 1.")
+#endif
+
+#ifdef DEBUG
+#define DEBUG_MODE 1
+#pragma message("DEBUG is on")
+#else
+#define DEBUG_MODE 0
+#pragma message("DEBUG is off")
+#endif
+
 typedef struct {
-    void* data; // 
-    size_t size; // 
-    size_t capacity; // 
-    size_t element_size; // 
+    void* data; //
+    size_t size; //
+    size_t capacity; //
+    size_t element_size; //
 } Vector;
 
 typedef struct {
@@ -24,7 +41,7 @@ typedef struct {
 typedef struct {
     int width;
     int height;
-} Size; // 
+} Size; //
 
 typedef struct {
     int x;
@@ -32,58 +49,58 @@ typedef struct {
 } Pos; // Position
 
 typedef struct {
-    int label; // 
-    Size size; // 
-    Pos* occupied; // 
-    int occupied_count; // 
-} BlockRotation; // 
+    int label; //
+    Size size; //
+    Pos* occupied; //
+    int occupied_count; //
+} BlockRotation; //
 
 typedef struct {
-    char name; // 
-    BlockRotation* rotations; // 
-    int rotations_count; // 
-} Block; // 
+    char name; //
+    BlockRotation* rotations; //
+    int rotations_count; //
+} Block; //
 
 typedef struct {
     int x_offset; // x
-    BlockRotation* rotation; // 
+    BlockRotation* rotation; //
     int y_offset; // y +infinity
     double assement_score; //  -infinity
-} BlockStatus; // 
+} BlockStatus; //
 
 typedef struct {
-    int length; // 
+    int length; //
     double* weights; //  length+1
-} AssessmentModel; // 
+} AssessmentModel; //
 
 typedef struct {
-    int* awards; //  1, 2, 3, 4 
-    Block* available_blocks; // 
-    int available_blocks_count; // 
-} GameConfig; // 
+    int* awards; //  1, 2, 3, 4
+    Block* available_blocks; //
+    int available_blocks_count; //
+} GameConfig; //
 
 typedef struct {
     Size size; //  1
-    short** grid; // 1 0  5 
-} Board; // 
+    short** grid; // 1 0  5
+} Board; //
 
 typedef struct {
-    GameConfig config; // 
+    GameConfig config; //
 
-    Board board; // 
-    long score; // 
+    Board board; //
+    long score; //
 
-    Block** upcoming_blocks; //  2 
-    BlockStatus** available_statuses_1; // 
-    int available_statuses_1_count; // 
-    BlockStatus** available_statuses_2; // 
-    int available_statuses_2_count; // 
-} Game; // 
+    Block** upcoming_blocks; //  2
+    BlockStatus** available_statuses_1; //
+    int available_statuses_1_count; //
+    BlockStatus** available_statuses_2; //
+    int available_statuses_2_count; //
+} Game; //
 
 typedef struct {
     Game* game;
     AssessmentModel* model;
-} Context; // 
+} Context; //
 
 double caculateLinearFunction(double* weights, int* features, int feature_length)
 {
@@ -91,11 +108,11 @@ double caculateLinearFunction(double* weights, int* features, int feature_length
     for (int i = 0; i < feature_length; i++) {
         result += weights[i] * features[i];
     }
-    result += weights[feature_length]; // 
+    result += weights[feature_length]; //
     return result;
 }
 
-const int k_num_features = 8; // 
+const int k_num_features = 8; //
 
 // ----- Block Rotation consts -----
 
@@ -560,7 +577,7 @@ void extractFeatures(const Board* board_before_action, const BlockStatus* action
             }
         }
     }
-// post_game_over_check:;
+    // post_game_over_check:;
 
     // if (*out_game_over_flag && out_features) {
     // }
@@ -869,7 +886,7 @@ size_t clearFullLines(Board* board, IntList* full_lines)
         }
     }
 
-    int write_y = 0;
+    int write_y = 0; // 下一行非满行应该被复制到的位置
     for (int read_y = 0; read_y < height_with_buffer; read_y++) {
         if (!is_line_full[read_y]) {
             if (write_y != read_y) {
@@ -1331,7 +1348,7 @@ int main(int argc, char* argv[])
         // printf("Use arg: %s\n", argv[1]);
     }
 
-    Size grid_size = { 10, 20 };
+    Size grid_size = { 10, 16 };
 
     Block* upcoming_blocks[2] = { NULL };
     Game game = {
@@ -1357,8 +1374,10 @@ int main(int argc, char* argv[])
         .game = &game,
         .model = &assessment_model
     };
-    
-    goto oj;
+
+    if (!DEBUG_MODE) {
+        goto oj;
+    }
 
     // Initialize the game
     if (argc == 1) {
@@ -1367,9 +1386,9 @@ int main(int argc, char* argv[])
         runRandomTest(&ctx, 1);
     } else if (strcmp(argv[1], "double") == 0) {
         runRandomTest(&ctx, 2);
-    } else if (1 || strcmp(argv[1], "oj") == 0) {
-    // {
-oj:;
+    } else if (!DEBUG_MODE || strcmp(argv[1], "oj") == 0) {
+        // {
+    oj:;
         char b1 = 0, b2 = 0;
         // fflush(stdin);
         scanf("%c%c", &b1, &b2);
@@ -1389,7 +1408,7 @@ oj:;
 
         BlockStatus* action_taken = NULL;
 
-        action_taken = runGameStep(&ctx, NULL, 2);
+        action_taken = runGameStep(&ctx, NULL, NUM_CONSIDER);
         if (action_taken) {
             printf("%d %d\n%ld\n", degreeToNo(action_taken->rotation->label), action_taken->x_offset, labs(ctx.game->score));
             // visualizeStep(game, action_taken);
@@ -1398,7 +1417,7 @@ oj:;
             action_taken = NULL;
         }
 
-        for (int i = 0; i < 1000010 ; i++) {
+        for (int i = 0; i < 1000010; i++) {
             if (!b2) {
                 scanf("%c", &b1);
                 while (b1 == '\n') {
@@ -1408,7 +1427,7 @@ oj:;
                 if (b1 == 'E') {
                     break;
                 }
-                
+
                 if (b1 == EOF) {
                     break;
                 }
@@ -1419,7 +1438,7 @@ oj:;
                 //     return 0;
                 // }
                 // printf("CURRENT Upcoming: %c, %c\n", game->upcoming_blocks[0]->name, game->upcoming_blocks[1]->name);
-                action_taken = runGameStep(&ctx, findBlock(b1), 2);
+                action_taken = runGameStep(&ctx, findBlock(b1), NUM_CONSIDER);
                 if (action_taken) {
                     printf("%d %d\n%ld\n", degreeToNo(action_taken->rotation->label), action_taken->x_offset, labs(ctx.game->score));
                     // visualizeStep(game, action_taken);
@@ -1443,13 +1462,15 @@ oj:;
             }
         }
 
-        goto end;
-    // }
+        if (!DEBUG_MODE) {
+            goto end;
+        }
+        // }
     } else {
         runRandomTest(&ctx, 0);
     }
 
-    end:;
+end:;
     // Cleanup before exiting
     GridFree(game.board.grid, &game.board.size);
     // GridFree(game.board.grid, &game.board.size);
