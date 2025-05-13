@@ -33,7 +33,7 @@ int main(int argc, char* argv[])
 
     // Create a default assessment model for testing visualization
     auto feature_extractor = std::make_unique<MyDbtFeatureExtractorCpp>();
-    std::vector<double> test_weights = { -19.0170, 8.3012, -7.6468, -18.8370, -14.5924, -12.0379, -1.6249, -26.9781, -1.1738 };
+    std::vector<double> test_weights = { -16.4912, 6.4811, -8.5137, -18.9269, -14.3096, -12.1746, -1.1174, -29.9476, -0.5464 };
     // Pad with zeros if needed, or adjust length
     int model_length = 8; // Use first 8 features for this example
     // test_weights.resize(model_length, 0.0); // Ensure weights vector matches length
@@ -101,7 +101,8 @@ int main(int argc, char* argv[])
                 throw std::runtime_error("Next upcoming block is missing or null for V2.");
             }
             const Block& next_block = *ctx.game.upcoming_blocks[1]; // Dereference pointer
-            BlockStatus best_action = findBestActionV2(ctx.game, actions, next_block, *ctx.strategy.assessment_model);
+            // BlockStatus best_action = findBestActionV2(ctx.game, actions, next_block, *ctx.strategy.assessment_model);
+            BlockStatus best_action = findBestAction(ctx.game, actions, *ctx.strategy.assessment_model);
 
             // Execute the action (modifies ctx.game directly)
             int y_offset = executeAction(ctx.game, best_action); // Returns offset, modifies ctx.game

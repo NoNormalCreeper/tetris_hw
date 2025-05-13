@@ -14,6 +14,8 @@
 #include <thread> // 用于 std::thread::hardware_concurrency
 #include <vector>
 
+// CEM
+
 // Include spdlog headers
 #include <spdlog/spdlog.h>
 #include "spdlog/async.h" //support for async logging.
@@ -24,7 +26,7 @@ const int k_num_params = k_num_features + 1; // 权重 a0 到 an (如果像 Pyth
 const int k_population_size = 100; // 种群大小
 const double k_elite_frac = 0.1; // 精英比例
 const int k_num_iterations = 50; // 迭代次数
-const int k_num_games_per_eval = 10; // 每次评估的游戏数
+const int k_num_games_per_eval = 8; // 每次评估的游戏数
 const double k_inital_std_dev = 5.0; // 初始标准差
 const double k_std_dev_epsilon = 1e-6; // 防止 sigma 变为零
 
@@ -116,10 +118,10 @@ EvalResult evaluate_parameters(int index, const std::vector<double>& params)
 
     for (int i = 0; i < k_num_games_per_eval; ++i) {
         // Reduced verbosity for per-game logs
-        // log_safe("Task ", index, ": Starting game ", i + 1, "/", k_num_games_per_eval);
+        log_safe("Task ", index, ": Starting game ", i + 1, "/", k_num_games_per_eval);
         int score = runGameForTraining(params); // Assuming runGameForTraining is thread-safe or uses thread-local RNG
         total_score += score;
-        // log_safe("Task ", index, ": Finished game ", i + 1, "/", k_num_games_per_eval, ", Score: ", score);
+        log_safe("Task ", index, ": Finished game ", i + 1, "/", k_num_games_per_eval, ", Score: ", score);
     }
 
     double avg_score = (k_num_games_per_eval > 0) ? (total_score / k_num_games_per_eval) : 0.0;
@@ -142,7 +144,7 @@ void runTraining()
 
     // --- 初始化 ---
     std::vector<double> initial_good_params = {
-        -15.7048, 5.0653, -6.2143, -8.1510, -12.8274, -11.0465, -1.2093, -31.4287, -2.1718 // 匹配 Python 的 initial_good_params
+        -16.4912, 6.4811, -8.5137, -18.9269, -14.3096, -12.1746, -1.1174, -29.9476, -0.5464 // 匹配 Python 的 initial_good_params
     };
     if (initial_good_params.size() != k_num_params) {
         log_safe("ERROR: initial_good_params size mismatch. Expected ", k_num_params, ", got ", initial_good_params.size());
@@ -150,7 +152,10 @@ void runTraining()
     }
 
     auto mu = initial_good_params;
-    std::vector<double> sigma(k_num_params, k_inital_std_dev);
+    // std::vector<double> sigma(k_num_params, k_inital_std_dev);
+    std::vector<double> sigma = {
+        1.6127, 1.5766, 0.5512, 1.9276, 1.5725, 0.4238, 0.4413, 2.5621, 2.3811
+    };
     // Log initial parameters
     log_safe("Initial mu: ", format_vector(mu));
     log_safe("Initial sigma: ", format_vector(sigma));

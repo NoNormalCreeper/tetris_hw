@@ -3,6 +3,7 @@
 #include "extractor.h" // Include MyDbtFeatureExtractorCpp AND getBlockFromRotation declaration
 #include "models.h"
 #include <algorithm> // For std::max_element
+#include <chrono>
 #include <limits> // For std::numeric_limits
 #include <memory> // For std::make_unique
 #include <numeric> // For std::inner_product
@@ -317,9 +318,9 @@ int executeAction(Game& game, const BlockStatus& action)
     // 3. Place the block directly on the game's board
     // Get the original block pointer
     const Block* block_to_place = getBlockFromRotation(action.rotation);
-     if (!block_to_place) {
-         throw std::runtime_error("Could not determine block type during executeAction.");
-     }
+    if (!block_to_place) {
+        throw std::runtime_error("Could not determine block type during executeAction.");
+    }
 
     for (const auto& pos : action.rotation->occupied) { // Use ->
         int place_x = action.x_offset + pos.x;
@@ -366,7 +367,7 @@ int executeAction(Game& game, const BlockStatus& action)
 int runGame(Context& ctx)
 {
     try {
-        while (!ctx.game.isEnd()) {
+        for (int i = 0; i <= 1000000; i++) {
             // 1. Get current block and generate actions
             if (ctx.game.upcoming_blocks.empty()) {
                 ctx.game.upcoming_blocks = getNewUpcoming(ctx.game);
@@ -397,7 +398,9 @@ int runGame(Context& ctx)
              }
             const Block& next_block = *ctx.game.upcoming_blocks[1]; // Dereference pointer
 
-            BlockStatus best_action = findBestActionV2(ctx.game, actions, next_block, *ctx.strategy.assessment_model);
+            // BlockStatus best_action = findBestActionV2(ctx.game, actions, next_block, *ctx.strategy.assessment_model);
+
+            BlockStatus best_action = findBestAction(ctx.game, actions, *ctx.strategy.assessment_model);
 
             // 3. Execute best action (modifies ctx.game directly)
             executeAction(ctx.game, best_action); // Modifies ctx.game
