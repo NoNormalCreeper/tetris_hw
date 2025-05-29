@@ -1,6 +1,4 @@
-// #include <cstddef>
 #include <limits.h>
-// #include <cstddef>
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -428,7 +426,7 @@ void calcHolesAndDepth(Board* board_after_elim, int* holes_count, int* total_hol
             if (grid[y][x] == 1) {
                 block_encountered = 1;
                 current_depth_contribution++;
-            } else if (block_encountered && y < height) { // below a block AND within logical height
+            } else if (block_encountered && y < height) { // below a block AND < logical height
                 (*holes_count)++;
                 rows_with_holes[y] = 1;
                 *total_hole_depth += current_depth_contribution;
@@ -1035,6 +1033,41 @@ BlockStatus** getAvailableActions(Game* game, Block* block)
     return actions;
 }
 
+double assessmentSingleAction(Game* game, BlockStatus* action, AssessmentModel* model)
+{
+    if (action->rotation == NULL) {
+        return -INFINITY; // Invalid action
+    }
+
+    BlockStatus current_action_eval = *action;
+    current_action_eval.y_offset = INT_MAX;
+
+    int y_offset = findYOffset(&game->board, &current_action_eval);
+    if (y_offset == -1) {
+        return -INFINITY; // Invalid action
+    }
+    current_action_eval.y_offset = y_offset;
+
+    int features_data[k_num_features];
+    Board* board_after_action = NULL;
+    int game_over = 0;
+
+    extractFeatures(&game->board, &current_action_eval, &board_after_action, &game_over, features_data);
+
+    if (game_over) {
+        if (board_after_action) {
+            GridFree(board_after_action->grid, &board_after_action->size);
+            free(board_after_action);
+        }
+        return -INFINITY; // Invalid action
+    }
+
+    double current_score = caculateLinearFunction(model->weights, features_data, k_num_features);
+
+    return current_score;
+
+}
+
 BlockStatus* findBestSingleAction(Game* game, AssessmentModel* model)
 {
     double best_score = -INFINITY;
@@ -1082,6 +1115,72 @@ BlockStatus* findBestSingleAction(Game* game, AssessmentModel* model)
             free(board_after_action);
         }
     }
+
+    return best_action;
+}
+
+BlockStatus* findBestActionV3(Game* game, AssessmentModel* model)
+{
+    double best_combined_score = -INFINITY;
+    BlockStatus* best_action = NULL;
+
+    BlockStatus** actions_1 = game->available_statuses_1;
+    Block* block_2 = game->upcoming_blocks[1];
+
+    int n = 5;
+    int top_n = (int)(game->available_statuses_1_count * n / 100.0) + 1;
+    double first_scores[game->available_statuses_1_count];
+
+    for (int i = 0; i < game->available_statuses_1_count; i++) {
+        first_scores[i] = assessmentSingleAction(game, game->available_statuses_1[i], model);
+    }
+
+    // 排序
+    for (int i = 0; i < game->available_statuses_1_count - 1; i++) {
+        for (int j = i + 1; j < game->available_statuses_1_count; j++) {
+            if (first_scores[i] < first_scores[j]) {
+                double temp_score = first_scores[i];
+                first_scores[i] = first_scores[j];
+                first_scores[j] = temp_score;
+
+                BlockStatus* temp_action = actions_1[i];
+                actions_1[i] = actions_1[j];
+                actions_1[j] = temp_action;
+            }
+        }
+    }
+
+    // 保留
+    if (top_n > game->available_statuses_1_count) {
+        top_n = game->available_statuses_1_count;
+    }
+    BlockStatus** top_actions_1 = (BlockStatus**)malloc(sizeof(BlockStatus*) * (top_n + 1));
+    for (int i = 0; i < top_n; i++) {
+        top_actions_1[i] = actions_1[i];
+    }
+    top_actions_1[top_n] = NULL; 
+
+    for (int i = 0; i < top_n; i++) {
+        BlockStatus* action_1 = actions_1[i];
+        if (action_1->rotation == NULL) {
+            continue;
+        }
+
+        for (int j = 0; j < game->available_statuses_2_count; j++) {
+            BlockStatus* action_2 = game->available_statuses_2[j];
+            double combined_score = assessmentTwoActions(game, action_1, action_2, model);
+            if (combined_score > best_combined_score) {
+                best_combined_score = combined_score;
+                best_action = action_1;
+            }
+        }
+    }
+
+    if (best_action == NULL) {
+        return NULL;
+    }
+
+    
 
     return best_action;
 }
@@ -1180,7 +1279,7 @@ BlockStatus* runGameStep(Context* ctx, Block* next_block, int mode)
         }
     }
 
-    if (mode == 2) {
+    if (mode >= 2) {
         if (next_block == NULL) {
             next_block = game->upcoming_blocks[1];
         }
@@ -1203,6 +1302,8 @@ BlockStatus* runGameStep(Context* ctx, Block* next_block, int mode)
         best_action = findBestSingleAction(game, model);
     } else if (mode == 2) {
         best_action = findBestAction(game, model);
+    } else if (mode == 3) {
+        best_action = findBestActionV3(game, model);
     } else {
         fprintf(stderr, "Invalid mode: %d\n", mode);
         return NULL; // Invalid mode
@@ -1344,9 +1445,9 @@ int degreeToNo(int degree)
 
 int main(int argc, char* argv[])
 {
-    if (argc > 1) {
-        // printf("Use arg: %s\n", argv[1]);
-    }
+    // if (argc > 1) {
+    //     // printf("Use arg: %s\n", argv[1]);
+    // }
 
     Size grid_size = { 10, 16 };
 
@@ -1367,7 +1468,7 @@ int main(int argc, char* argv[])
 
     AssessmentModel assessment_model = {
         .length = 9,
-        .weights = (double[]) { -15.7778, 6.2347, -8.8812, -19.6290, -16.0015, -12.1729, -1.5963, -30.3512, 0.3048 }
+        .weights = (double[]) { -14.2970, -1.6659, -9.9349, -15.6773, -17.8268, -14.1545, -1.3156, -32.9234, -0.6702 }
     };
 
     Context ctx = {
@@ -1432,20 +1533,23 @@ int main(int argc, char* argv[])
                     break;
                 }
 
+                const int change_to_2 = 100000;
+
                 // if (ctx.game->score < 0 || ctx.game->score > 1000000) { // check game over before next step
                 //     // printf("%ld\n", labs(ctx.game->score));
                 //     // fflush(stdout);
                 //     return 0;
                 // }
                 // printf("CURRENT Upcoming: %c, %c\n", game->upcoming_blocks[0]->name, game->upcoming_blocks[1]->name);
-                action_taken = runGameStep(&ctx, findBlock(b1), NUM_CONSIDER);
+                action_taken = runGameStep(&ctx, findBlock(b1), i >= change_to_2 ? 2 : 3);
+                // action_taken = runGameStep(&ctx, findBlock(b1), 3);
                 if (action_taken) {
                     printf("%d %d\n%ld\n", degreeToNo(action_taken->rotation->label), action_taken->x_offset, labs(ctx.game->score));
                     // visualizeStep(game, action_taken);
                     fflush(stdout);
                     free(action_taken);
                     action_taken = NULL;
-                } else if (ctx.game->score < 0) { // check game over after step attempt
+                } else if (ctx.game->score < 0) { // check game over after step
                     // printf("%ld\n", labs(ctx.game->score));
                     // break;
                     // return 0;
@@ -1471,7 +1575,7 @@ int main(int argc, char* argv[])
     }
 
 end:;
-    // Cleanup before exiting
+    // Cleanup
     GridFree(game.board.grid, &game.board.size);
     // GridFree(game.board.grid, &game.board.size);
     freeActionsArray(game.available_statuses_1, game.available_statuses_1_count);
