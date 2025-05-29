@@ -144,7 +144,7 @@ void runTraining()
 
     // --- 初始化 ---
     std::vector<double> initial_good_params = {
-        -16.4912, 6.4811, -8.5137, -18.9269, -14.3096, -12.1746, -1.1174, -29.9476, -0.5464 // 匹配 Python 的 initial_good_params
+        -15.7778, 6.2347, -8.8812, -19.6290, -16.0015, -12.1729, -1.5963, -30.3512, 0.3048 // 匹配 Python 的 initial_good_params
     };
     if (initial_good_params.size() != k_num_params) {
         log_safe("ERROR: initial_good_params size mismatch. Expected ", k_num_params, ", got ", initial_good_params.size());
@@ -152,10 +152,10 @@ void runTraining()
     }
 
     auto mu = initial_good_params;
-    // std::vector<double> sigma(k_num_params, k_inital_std_dev);
-    std::vector<double> sigma = {
-        1.6127, 1.5766, 0.5512, 1.9276, 1.5725, 0.4238, 0.4413, 2.5621, 2.3811
-    };
+    std::vector<double> sigma(k_num_params, k_inital_std_dev);
+    // std::vector<double> sigma = {
+    //     1.6127, 1.5766, 0.5512, 1.9276, 1.5725, 0.4238, 0.4413, 2.5621, 2.3811
+    // };
     // Log initial parameters
     log_safe("Initial mu: ", format_vector(mu));
     log_safe("Initial sigma: ", format_vector(sigma));

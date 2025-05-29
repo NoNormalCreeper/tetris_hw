@@ -366,8 +366,10 @@ int executeAction(Game& game, const BlockStatus& action)
 
 int runGame(Context& ctx)
 {
+    int steps = 0;
     try {
         for (int i = 0; i <= 1000000; i++) {
+            steps = i;
             // 1. Get current block and generate actions
             if (ctx.game.upcoming_blocks.empty()) {
                 ctx.game.upcoming_blocks = getNewUpcoming(ctx.game);
@@ -423,7 +425,8 @@ int runGame(Context& ctx)
         // Optionally log: std::cerr << "Game ended with unexpected error: " << e.what() << std::endl;
     }
 
-    return std::abs(ctx.game.score); // Return absolute score
+    // return std::abs(ctx.game.score); // Return absolute score
+    return steps; // Return the number of steps taken, or final score if needed
 }
 
 int runGameForTraining(const std::vector<double>& weights)

@@ -33,7 +33,7 @@ int main(int argc, char* argv[])
 
     // Create a default assessment model for testing visualization
     auto feature_extractor = std::make_unique<MyDbtFeatureExtractorCpp>();
-    std::vector<double> test_weights = { -16.4912, 6.4811, -8.5137, -18.9269, -14.3096, -12.1746, -1.1174, -29.9476, -0.5464 };
+    std::vector<double> test_weights = { -13.7818, 5.2797, -13.3459, -18.9637, -26.1264, -14.5248, -0.9945, -35.6741, -7.4559 };
     // Pad with zeros if needed, or adjust length
     int model_length = 8; // Use first 8 features for this example
     // test_weights.resize(model_length, 0.0); // Ensure weights vector matches length
