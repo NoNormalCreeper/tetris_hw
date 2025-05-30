@@ -1493,7 +1493,7 @@ int main(int argc, char* argv[])
     oj:;
         char b1 = 0, b2 = 0;
 
-        FILE* input_file = fopen("input.txt", "r");
+        FILE* input_file = fopen("2.txt", "r");
 
         // fflush(stdin);
         // scanf("%c%c", &b1, &b2);
@@ -1517,9 +1517,9 @@ int main(int argc, char* argv[])
 
         action_taken = runGameStep(&ctx, NULL, NUM_CONSIDER);
         if (action_taken) {
-            printf("%d %d\n%ld\n", degreeToNo(action_taken->rotation->label), action_taken->x_offset, labs(ctx.game->score));
-            // visualizeStep(game, action_taken);
-            fflush(stdout);
+            // printf("%d %d\n%ld\n", degreeToNo(action_taken->rotation->label), action_taken->x_offset, labs(ctx.game->score));
+            // // visualizeStep(game, action_taken);
+            // fflush(stdout);
             free(action_taken);
             action_taken = NULL;
         }
@@ -1551,21 +1551,27 @@ int main(int argc, char* argv[])
                 action_taken = runGameStep(&ctx, findBlock(b1), i >= change_to_2 ? 2 : 3);
                 // action_taken = runGameStep(&ctx, findBlock(b1), 3);
                 if (action_taken) {
-                    printf("%d %d\n%ld\n", degreeToNo(action_taken->rotation->label), action_taken->x_offset, labs(ctx.game->score));
-                    // visualizeStep(game, action_taken);
-                    fflush(stdout);
+                    if (i % 5000 == 0) {
+                        printf("Step %d:\n", i);
+                        printf("%d %d\n%ld\n", degreeToNo(action_taken->rotation->label), action_taken->x_offset, labs(ctx.game->score));
+                        fflush(stdout);
+                    }
+                    // printf("%d %d\n%ld\n", degreeToNo(action_taken->rotation->label), action_taken->x_offset, labs(ctx.game->score));
+                    // // visualizeStep(game, action_taken);
+                    // fflush(stdout);
                     free(action_taken);
                     action_taken = NULL;
                 } else if (ctx.game->score < 0) { // check game over after step
-                    // printf("%ld\n", labs(ctx.game->score));
-                    // break;
-                    // return 0;
+                    printf("%ld\n", labs(ctx.game->score));
+                    break;
+                    return 0;
                 } else {
                     fprintf(stderr, "runGameStep returned NULL without ending game.\n");
                     break;
                 }
 
                 if (b1 == 'X') {
+                    printf("%ld\n", labs(ctx.game->score));
                     break;
                 }
             } else {

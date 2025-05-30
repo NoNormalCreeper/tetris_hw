@@ -1127,7 +1127,7 @@ BlockStatus* findBestActionV3(Game* game, AssessmentModel* model)
     BlockStatus** actions_1 = game->available_statuses_1;
     Block* block_2 = game->upcoming_blocks[1];
 
-    int n = 5;
+    int n = 10;
     int top_n = (int)(game->available_statuses_1_count * n / 100.0) + 1;
     double first_scores[game->available_statuses_1_count];
 
